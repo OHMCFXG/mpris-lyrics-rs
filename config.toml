@@ -1,0 +1,4 @@
+player_refresh_interval = 3000
+lyric_refresh_interval = 50
+white_list = ["mpd", "Spotify", "lx-music-desktop"]
+sort_list = ["netease", "qq"]
