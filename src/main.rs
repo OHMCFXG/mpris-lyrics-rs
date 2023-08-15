@@ -60,6 +60,7 @@ fn find_current_player(
 
 fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, sort_list: Vec<String>) {
     let player_finder = PlayerFinder::new().unwrap();
+    let mut current_player;
     loop {
         // 根据当前播放器的名字获取当前播放器
         let current_player_name = shared_data
@@ -70,16 +71,29 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
             .unwrap()
             .clone();
 
-        // 尝试获取当前播放器，如果获取失败则继续循环
-        let current_player = player_finder.find_by_name(current_player_name.as_str());
-        if current_player.is_err() {
+        // 没有匹配到的播放器，不要调用finder，直接sleep
+        if current_player_name.is_empty() {
             thread::sleep(Duration::from_millis(refresh_interval));
             continue;
         }
-        let current_player = current_player.unwrap();
+
+        // 尝试获取当前播放器，如果获取失败则继续循环
+        let current_player_find = player_finder.find_by_name(current_player_name.as_str());
+        if current_player_find.is_err() {
+            thread::sleep(Duration::from_millis(refresh_interval));
+            continue;
+        }
+        current_player = current_player_find.unwrap();
 
         // 获取当前播放器的歌曲信息
-        let metadata = current_player.get_metadata().unwrap();
+        let metadata = match current_player.get_metadata() {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                // metadata 获取失败，可能是播放器被杀，继续循环
+                thread::sleep(Duration::from_millis(refresh_interval));
+                continue;
+            }
+        };
         let song_name = metadata.title().unwrap();
         let artist = metadata.artists().unwrap().join(",");
         let length = metadata.length().unwrap().as_millis();
@@ -222,7 +236,10 @@ fn main() {
                 shared_data.lock().unwrap().current_player_name =
                     Arc::new(Mutex::new(current_player.identity().to_string()));
             }
-            Err(_) => {}
+            Err(_) => {
+                // 重置当前播放器名称
+                shared_data.lock().unwrap().current_player_name = Arc::new(Mutex::new(String::new()));
+            }
         }
 
         // 休眠一段时间
