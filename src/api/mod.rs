@@ -53,8 +53,7 @@ impl SearchLyricsInfo {
 }
 
 pub trait LyricsProviderTrait {
-    // fn get_lyric(&self, id: &str) -> String;
-    fn get_best_match_lyric(&self, keyword: &str, length: u64) -> Result<SearchLyricsInfo,LyricsProviderError>;
+    fn get_best_match_lyric(&self, keyword: &str, length: u64) -> Result<SearchLyricsInfo, LyricsProviderError>;
 }
 
 #[derive(Debug, Error)]

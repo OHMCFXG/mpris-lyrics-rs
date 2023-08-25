@@ -22,7 +22,7 @@ pub fn get_lyric(mid: &str) -> LyricsProviderResult<String> {
         .header(REFERER, "https://y.qq.com")
         .timeout(Duration::from_secs(REQWEST_TIMEOUT))
         .send().map_err(LyricsProviderError::RequestFailed)?;
-    let data:Value = resp.json().map_err(LyricsProviderError::ResponseJsonDeserializeFailed)?;
+    let data: Value = resp.json().map_err(LyricsProviderError::ResponseJsonDeserializeFailed)?;
     let lyric_text = data.pointer("/lyric")
         .ok_or(LyricsProviderError::JsonNoSuchField("lyric"))?;
     Ok(lyric_text.as_str().unwrap().to_string())

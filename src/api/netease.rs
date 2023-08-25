@@ -17,6 +17,8 @@ const WEAPI_PRESET_KEY: &[u8] = b"0CoJUm6Qyw8W8jud";
 const WEAPI_IV: &[u8] = b"0102030405060708";
 const WEAPI_PUBKEY: &[u8] = b"-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDgtQn2JZ34ZC28NWYpAUd98iZ37BUrX/aKzmFbt7clFSs6sXqHauqKWqdtLkF2KexO40H1YTX8z2lSgBBOAxLsvaklV8k4cBFK9snQXE9/DDaFt6Rr7iVZMldczhC0JNgTz+SHXT6CBHuX3e9SdB1Ua44oncaTWz7OBGLbCiK45wIDAQAB\n-----END PUBLIC KEY-----";
 
+const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_1_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.87 Safari/537.36";
+
 // get 16 length secret from base62
 fn get_secret() -> [u8; 16] {
     let mut key = [0; 16];
@@ -71,14 +73,10 @@ struct WeApiReqForm {
     encSecKey: String,
 }
 
-pub struct NeteaseLyricsProvider {
-    // pub name: String,
-    // pub url: String,
-}
+pub struct NeteaseLyricsProvider {}
 
 impl LyricsProviderTrait for NeteaseLyricsProvider {
     fn get_best_match_lyric(&self, keyword: &str, length: u64) -> LyricsProviderResult<SearchLyricsInfo> {
-
         let data = search(keyword)?;
         let mut match_song = &data["result"]["songs"][0];
         let all_song = data.pointer("/result/songs")
@@ -97,7 +95,7 @@ impl LyricsProviderTrait for NeteaseLyricsProvider {
         let lyric_text = get_lyric(id.as_str())?;
 
         let lyrics = SearchLyricsInfo {
-            source: "netease".to_string(),
+            source: String::from("netease"),
             lyrics: SearchLyricsInfo::parse_lyric(&lyric_text),
             // fallback,
             delta_abs,
@@ -122,12 +120,12 @@ fn get_lyric(id: &str) -> LyricsProviderResult<String> {
     let resp = client.post(url)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Referer", "https://music.163.com/")
-        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_1_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.87 Safari/537.36")
+        .header("User-Agent", USER_AGENT)
         .form(&req_form)
         .timeout(Duration::from_secs(REQWEST_TIMEOUT))
         .send()
         .map_err(LyricsProviderError::RequestFailed)?;
-    let json:Value = resp.json()
+    let json: Value = resp.json()
         .map_err(LyricsProviderError::ResponseJsonDeserializeFailed)?;
     let lyric = json.pointer("/lrc/lyric")
         .ok_or(LyricsProviderError::JsonNoSuchField("/lrc/lyric"))?
@@ -152,7 +150,7 @@ fn search(keyword: &str) -> LyricsProviderResult<Value> {
     let resp = client.post(url)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Referer", "https://music.163.com/")
-        .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_1_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.87 Safari/537.36")
+        .header("User-Agent", USER_AGENT)
         .form(&req_form)
         .timeout(Duration::from_secs(REQWEST_TIMEOUT))
         .send()
