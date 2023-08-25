@@ -1,13 +1,14 @@
 use std::time::Duration;
+use async_trait::async_trait;
 use reqwest::header::{REFERER, USER_AGENT};
 use serde_json::{json, Value};
 use crate::api::REQWEST_TIMEOUT;
 
 use super::{LyricsProviderTrait, SearchLyricsInfo, LyricsProviderError, LyricsProviderResult};
 
-pub fn get_lyric(mid: &str) -> LyricsProviderResult<String> {
+async fn get_lyric(mid: &str) -> LyricsProviderResult<String> {
     let url = "https://i.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg";
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let params = [
         ("songmid", mid),
         ("g_tk", "5381"),
@@ -21,16 +22,16 @@ pub fn get_lyric(mid: &str) -> LyricsProviderResult<String> {
         .query(&params)
         .header(REFERER, "https://y.qq.com")
         .timeout(Duration::from_secs(REQWEST_TIMEOUT))
-        .send().map_err(LyricsProviderError::RequestFailed)?;
-    let data: Value = resp.json().map_err(LyricsProviderError::ResponseJsonDeserializeFailed)?;
+        .send().await.map_err(LyricsProviderError::RequestFailed)?;
+    let data: Value = resp.json().await.map_err(LyricsProviderError::ResponseJsonDeserializeFailed)?;
     let lyric_text = data.pointer("/lyric")
         .ok_or(LyricsProviderError::JsonNoSuchField("lyric"))?;
     Ok(lyric_text.as_str().unwrap().to_string())
 }
 
-fn search(keyword: &str) -> LyricsProviderResult<Value> {
+async fn search(keyword: &str) -> LyricsProviderResult<Value> {
     let url = "https://u.y.qq.com/cgi-bin/musicu.fcg";
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
     let body = json!({
       "comm": {
         "ct": 19,
@@ -64,17 +65,20 @@ fn search(keyword: &str) -> LyricsProviderResult<Value> {
         )
         .timeout(Duration::from_secs(REQWEST_TIMEOUT))
         .send()
+        .await
         .map_err(LyricsProviderError::RequestFailed)?;
     let result = resp.json()
+        .await
         .map_err(LyricsProviderError::ResponseJsonDeserializeFailed);
     result
 }
 
 pub struct QQMusicLyricsProvider {}
 
+#[async_trait]
 impl LyricsProviderTrait for QQMusicLyricsProvider {
-    fn get_best_match_lyric(&self, keyword: &str, length: u64) -> LyricsProviderResult<SearchLyricsInfo> {
-        let data = search(keyword)?;
+    async fn get_best_match_lyric(&self, keyword: &str, length: u64) -> LyricsProviderResult<SearchLyricsInfo> {
+        let data = search(keyword).await?;
         let all_songs = data.pointer("/req/data/body/item_song")
             .ok_or(LyricsProviderError::JsonNoSuchField("req/data/body/item_song"))?
             .as_array().ok_or(LyricsProviderError::JsonNotArray("req/data/body/item_song"))?;
@@ -91,7 +95,7 @@ impl LyricsProviderTrait for QQMusicLyricsProvider {
         let delta_abs = (match_song["interval"].as_i64().unwrap() * 1000 - length as i64).abs();
 
         let mid = match_song["mid"].as_str().unwrap();
-        let lyric_text = get_lyric(mid)?;
+        let lyric_text = get_lyric(mid).await?;
 
         let lyrics = SearchLyricsInfo {
             source: String::from("qq"),

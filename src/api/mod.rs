@@ -1,5 +1,6 @@
 use regex::Regex;
 use std::collections::BTreeMap;
+use async_trait::async_trait;
 use thiserror::Error;
 
 pub mod netease;
@@ -52,8 +53,9 @@ impl SearchLyricsInfo {
     }
 }
 
+#[async_trait]
 pub trait LyricsProviderTrait {
-    fn get_best_match_lyric(&self, keyword: &str, length: u64) -> Result<SearchLyricsInfo, LyricsProviderError>;
+    async fn get_best_match_lyric(&self, keyword: &str, length: u64) -> Result<SearchLyricsInfo, LyricsProviderError>;
 }
 
 #[derive(Debug, Error)]

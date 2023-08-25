@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use std::time::Duration;
+use async_trait::async_trait;
 use base64::{engine::general_purpose, Engine as _};
 use hex;
 use openssl::rsa::{Padding, Rsa};
@@ -75,9 +76,10 @@ struct WeApiReqForm {
 
 pub struct NeteaseLyricsProvider {}
 
+#[async_trait]
 impl LyricsProviderTrait for NeteaseLyricsProvider {
-    fn get_best_match_lyric(&self, keyword: &str, length: u64) -> LyricsProviderResult<SearchLyricsInfo> {
-        let data = search(keyword)?;
+    async fn get_best_match_lyric(&self, keyword: &str, length: u64) -> LyricsProviderResult<SearchLyricsInfo> {
+        let data = search(keyword).await?;
         let mut match_song = &data["result"]["songs"][0];
         let all_song = data.pointer("/result/songs")
             .ok_or(LyricsProviderError::JsonNoSuchField("/result/songs"))?
@@ -92,7 +94,7 @@ impl LyricsProviderTrait for NeteaseLyricsProvider {
         let delta_abs = (match_song["dt"].as_i64().unwrap() - length as i64).abs();
 
         let id = match_song["id"].to_string();
-        let lyric_text = get_lyric(id.as_str())?;
+        let lyric_text = get_lyric(id.as_str()).await?;
 
         let lyrics = SearchLyricsInfo {
             source: String::from("netease"),
@@ -104,7 +106,7 @@ impl LyricsProviderTrait for NeteaseLyricsProvider {
     }
 }
 
-fn get_lyric(id: &str) -> LyricsProviderResult<String> {
+async fn get_lyric(id: &str) -> LyricsProviderResult<String> {
     let url = "https://music.163.com/weapi/song/lyric";
     let data = json!({
         "id": id,
@@ -115,7 +117,7 @@ fn get_lyric(id: &str) -> LyricsProviderResult<String> {
     });
     let req_form = weapi_encrypt(data);
 
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
 
     let resp = client.post(url)
         .header("Content-Type", "application/x-www-form-urlencoded")
@@ -124,8 +126,10 @@ fn get_lyric(id: &str) -> LyricsProviderResult<String> {
         .form(&req_form)
         .timeout(Duration::from_secs(REQWEST_TIMEOUT))
         .send()
+        .await
         .map_err(LyricsProviderError::RequestFailed)?;
     let json: Value = resp.json()
+        .await
         .map_err(LyricsProviderError::ResponseJsonDeserializeFailed)?;
     let lyric = json.pointer("/lrc/lyric")
         .ok_or(LyricsProviderError::JsonNoSuchField("/lrc/lyric"))?
@@ -134,7 +138,7 @@ fn get_lyric(id: &str) -> LyricsProviderResult<String> {
     Ok(lyric)
 }
 
-fn search(keyword: &str) -> LyricsProviderResult<Value> {
+async fn search(keyword: &str) -> LyricsProviderResult<Value> {
     let url = "https://music.163.com/weapi/cloudsearch/pc";
     let data = json!({
         "s": keyword,
@@ -145,7 +149,7 @@ fn search(keyword: &str) -> LyricsProviderResult<Value> {
     });
     let req_form = weapi_encrypt(data);
 
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
 
     let resp = client.post(url)
         .header("Content-Type", "application/x-www-form-urlencoded")
@@ -154,9 +158,10 @@ fn search(keyword: &str) -> LyricsProviderResult<Value> {
         .form(&req_form)
         .timeout(Duration::from_secs(REQWEST_TIMEOUT))
         .send()
+        .await
         .map_err(LyricsProviderError::RequestFailed)?;
 
-    resp.json()
+    resp.json().await
         .map_err(LyricsProviderError::ResponseJsonDeserializeFailed)
 }
 

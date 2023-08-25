@@ -115,8 +115,9 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
             let search_lyrics_info_list = provider_list
                 .iter()
                 .map(|provider| {
-                    let search_lyrics_info = provider
-                        .get_best_match_lyric(&format!("{} {}", artist, song_name), length as u64);
+                    let search_lyrics_info =
+                        tokio::runtime::Runtime::new().unwrap().block_on(provider
+                        .get_best_match_lyric(&format!("{} {}", artist, song_name), length as u64));
                     match search_lyrics_info {
                         Ok(search_lyrics_info) => Some(search_lyrics_info),
                         Err(err) => {
