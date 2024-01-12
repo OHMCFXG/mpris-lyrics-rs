@@ -61,6 +61,7 @@ fn find_current_player(
 fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, sort_list: Vec<String>) {
     let player_finder = PlayerFinder::new().unwrap();
     let mut current_player;
+    let mut all_provider_failed = false;
     loop {
         // 根据当前播放器的名字获取当前播放器
         let current_player_name = shared_data
@@ -102,6 +103,12 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
 
         let shared_data = shared_data.lock().unwrap();
         let mut lyrics_info = shared_data.lyrics_info.lock().unwrap();
+
+        // 歌曲未变，但是上次获取歌词所有源全部失败，继续循环，避免重复发请求
+        if song_name == lyrics_info.title && all_provider_failed {
+            thread::sleep(Duration::from_millis(refresh_interval));
+            continue;
+        }
 
         // 切歌时更新歌词信息
         if song_name != lyrics_info.title {
@@ -147,14 +154,21 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
 
             // println!("sorted_lyrics_info_list: {:#?}", sorted_lyrics_info_list);
 
-            let search_lyrics_info = &sorted_lyrics_info_list[0];
+            // 选择排序后的第一个歌词源，如果所有歌词源都失败，打印错误信息，继续循环
+            let search_lyrics_info = sorted_lyrics_info_list.first();
+            all_provider_failed = search_lyrics_info.is_none();
+            if all_provider_failed {
+                println!("所有歌词源均失败");
+                thread::sleep(Duration::from_millis(refresh_interval));
+                continue;
+            }
 
             // println!("使用歌词源: {}", search_lyrics_info.unwrap().source);
 
             lyrics_info.title = song_name.to_string();
             lyrics_info.artist = artist.to_string();
             lyrics_info.length = length as u64;
-            lyrics_info.lyrics = search_lyrics_info.as_ref().unwrap().lyrics.clone();
+            lyrics_info.lyrics = search_lyrics_info.unwrap().as_ref().unwrap().lyrics.clone();
             println!("{} - {}", artist, song_name);
         }
 
@@ -184,7 +198,7 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
                     lyrics_info.last_printed_line = lyric.clone();
                 }
             }
-            _ => continue,
+            _ => {},
         }
 
 
