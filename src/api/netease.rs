@@ -9,7 +9,7 @@ use openssl::symm::{encrypt, Cipher};
 use rand::Rng;
 use serde::Serialize;
 use serde_json::{json, Value};
-use crate::api::{LyricsProviderError, LyricsProviderResult};
+use anyhow::Result;
 
 use super::{LyricsProviderTrait, SearchLyricsInfo, REQWEST_TIMEOUT};
 
@@ -78,12 +78,16 @@ pub struct NeteaseLyricsProvider {}
 
 #[async_trait]
 impl LyricsProviderTrait for NeteaseLyricsProvider {
-    async fn get_best_match_lyric(&self, keyword: &str, length: u64) -> LyricsProviderResult<SearchLyricsInfo> {
+    async fn get_best_match_lyric(&self, keyword: &str, length: u64) -> Result<SearchLyricsInfo> {
         let data = search(keyword).await?;
-        let mut match_song = &data["result"]["songs"][0];
         let all_song = data.pointer("/result/songs")
-            .ok_or(LyricsProviderError::JsonNoSuchField("/result/songs"))?
-            .as_array().ok_or(LyricsProviderError::JsonNotArray("/result/songs"))?;
+            .ok_or(anyhow::anyhow!("No /result/songs path in json"))?
+            .as_array()
+            .ok_or(anyhow::anyhow!("Not an array"))?;
+
+        let mut match_song = all_song.first()
+            .ok_or(anyhow::anyhow!("No songs found"))?;
+
         for song in all_song {
             if song["dt"].as_u64().unwrap() == length {
                 match_song = song;
@@ -106,7 +110,7 @@ impl LyricsProviderTrait for NeteaseLyricsProvider {
     }
 }
 
-async fn get_lyric(id: &str) -> LyricsProviderResult<String> {
+async fn get_lyric(id: &str) -> Result<String> {
     let url = "https://music.163.com/weapi/song/lyric";
     let data = json!({
         "id": id,
@@ -126,19 +130,16 @@ async fn get_lyric(id: &str) -> LyricsProviderResult<String> {
         .form(&req_form)
         .timeout(Duration::from_secs(REQWEST_TIMEOUT))
         .send()
-        .await
-        .map_err(LyricsProviderError::RequestFailed)?;
+        .await?;
     let json: Value = resp.json()
-        .await
-        .map_err(LyricsProviderError::ResponseJsonDeserializeFailed)?;
+        .await?;
     let lyric = json.pointer("/lrc/lyric")
-        .ok_or(LyricsProviderError::JsonNoSuchField("/lrc/lyric"))?
-        .as_str().unwrap()
-        .to_string();
-    Ok(lyric)
+        .ok_or(anyhow::anyhow!("No lyric found"))?
+        .as_str().unwrap();
+    Ok(lyric.to_string())
 }
 
-async fn search(keyword: &str) -> LyricsProviderResult<Value> {
+async fn search(keyword: &str) -> Result<Value> {
     let url = "https://music.163.com/weapi/cloudsearch/pc";
     let data = json!({
         "s": keyword,
@@ -158,11 +159,10 @@ async fn search(keyword: &str) -> LyricsProviderResult<Value> {
         .form(&req_form)
         .timeout(Duration::from_secs(REQWEST_TIMEOUT))
         .send()
-        .await
-        .map_err(LyricsProviderError::RequestFailed)?;
+        .await?;
 
-    resp.json().await
-        .map_err(LyricsProviderError::ResponseJsonDeserializeFailed)
+    let json: Value = resp.json().await?;
+    Ok(json)
 }
 
 #[cfg(test)]

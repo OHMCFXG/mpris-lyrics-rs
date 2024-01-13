@@ -42,7 +42,6 @@ fn find_current_player(
     for player_name in white_list {
         // 查找当前所有正在播放音频的player, 检查是否存在白名单关键字
         let players = finder.find_all().unwrap();
-        // println!("players: {:?}", players);
         for player in players {
             if player
                 .identity()
@@ -124,7 +123,7 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
                 .map(|provider| {
                     let search_lyrics_info =
                         tokio::runtime::Runtime::new().unwrap().block_on(provider
-                        .get_best_match_lyric(&format!("{} {}", artist, song_name), length as u64));
+                            .get_best_match_lyric(&format!("{} {}", artist, song_name), length as u64));
                     match search_lyrics_info {
                         Ok(search_lyrics_info) => Some(search_lyrics_info),
                         Err(err) => {
@@ -135,6 +134,14 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
                 })
                 .filter(|x| x.is_some())
                 .collect::<Vec<_>>();
+
+            // 如果所有歌词源都失败，打印错误信息，继续循环
+            all_provider_failed = search_lyrics_info_list.is_empty();
+            if all_provider_failed {
+                println!("所有歌词源都失败，正在重试...");
+                thread::sleep(Duration::from_millis(refresh_interval));
+                continue;
+            }
 
             // 按照 delta_abs 从小到大排序，delta_abs 相同的情况下，按照 sort_list 中的顺序排序
             let mut sorted_lyrics_info_list = search_lyrics_info_list;
@@ -152,16 +159,7 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
                 a.as_ref().unwrap().source.cmp(&b.as_ref().unwrap().source)
             });
 
-            // println!("sorted_lyrics_info_list: {:#?}", sorted_lyrics_info_list);
-
-            // 选择排序后的第一个歌词源，如果所有歌词源都失败，打印错误信息，继续循环
             let search_lyrics_info = sorted_lyrics_info_list.first();
-            all_provider_failed = search_lyrics_info.is_none();
-            if all_provider_failed {
-                println!("所有歌词源均失败");
-                thread::sleep(Duration::from_millis(refresh_interval));
-                continue;
-            }
 
             // println!("使用歌词源: {}", search_lyrics_info.unwrap().source);
 
@@ -181,8 +179,6 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
         // 获取当前播放时间对应的歌词
         let lyrics = lyrics_info.lyrics.clone();
 
-        // println!("{:?}", lyrics);
-
         // 查找最近的歌词，歌词时间小于等于当前播放时间
         // let current_lyric = lyrics.range(..=position as u64).max_by_key(|(&key, _)| key).map(|(_, &ref value)| value).unwrap();
         let current_lyric = lyrics
@@ -198,7 +194,7 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
                     lyrics_info.last_printed_line = lyric.clone();
                 }
             }
-            _ => {},
+            _ => {}
         }
 
 
@@ -216,9 +212,6 @@ fn main() {
         .find_config_file("config.toml")
         .expect("未找到配置文件，正在退出...");
     let config: Config = toml::from_str(&fs::read_to_string(config_path).unwrap()).unwrap();
-    // println!("{}", config.player_refresh_interval);
-    // println!("{}", config.lyric_refresh_interval);
-    // println!("{:?}", config.white_list);
 
     let player_finder = PlayerFinder::new().unwrap();
 
@@ -243,10 +236,8 @@ fn main() {
     loop {
         // 获取当前播放器
         let current_player = find_current_player(&player_finder, &config.white_list);
-        // println!("current_player: {:?}", current_player);
         match current_player {
             Ok(current_player) => {
-                // println!("current_player: {:?}", current_player);
                 // 更新当前播放器
                 shared_data.lock().unwrap().current_player_name =
                     Arc::new(Mutex::new(current_player.identity().to_string()));

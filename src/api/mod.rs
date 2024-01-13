@@ -1,7 +1,8 @@
 use regex::Regex;
 use std::collections::BTreeMap;
 use async_trait::async_trait;
-use thiserror::Error;
+use anyhow::Result;
+// use thiserror::Error;
 
 pub mod netease;
 pub mod qq;
@@ -13,7 +14,6 @@ pub struct SearchLyricsInfo {
     pub source: String,
     pub lyrics: BTreeMap<u64, String>,
     pub delta_abs: i64,
-    // pub fallback: bool,
 }
 
 impl SearchLyricsInfo {
@@ -55,26 +55,8 @@ impl SearchLyricsInfo {
 
 #[async_trait]
 pub trait LyricsProviderTrait {
-    async fn get_best_match_lyric(&self, keyword: &str, length: u64) -> Result<SearchLyricsInfo, LyricsProviderError>;
+    async fn get_best_match_lyric(&self, keyword: &str, length: u64) -> Result<SearchLyricsInfo>;
 }
-
-#[derive(Debug, Error)]
-pub enum LyricsProviderError {
-    #[error("failed to send request: {0}")]
-    RequestFailed(reqwest::Error),
-
-    #[error("failed to deserialize the response JSON: {0}")]
-    ResponseJsonDeserializeFailed(reqwest::Error),
-
-    #[error("json no such field: {0}")]
-    JsonNoSuchField(&'static str),
-
-    #[error("this field is not array: {0}")]
-    JsonNotArray(&'static str),
-
-}
-
-pub type LyricsProviderResult<T> = Result<T, LyricsProviderError>;
 
 
 #[cfg(test)]
