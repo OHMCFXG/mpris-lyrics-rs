@@ -76,6 +76,10 @@ pub struct QQMusicLyricsProvider {}
 
 #[async_trait]
 impl LyricsProviderTrait for QQMusicLyricsProvider {
+    // 获取歌词源名称
+    fn get_source_name(&self) -> String {
+        String::from("qq")
+    }
     async fn get_best_match_lyric(&self, keyword: &str, length: u64) -> Result<SearchLyricsInfo> {
         let data = search(keyword).await?;
 

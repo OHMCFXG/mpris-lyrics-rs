@@ -74,42 +74,6 @@ struct WeApiReqForm {
     encSecKey: String,
 }
 
-pub struct NeteaseLyricsProvider {}
-
-#[async_trait]
-impl LyricsProviderTrait for NeteaseLyricsProvider {
-    async fn get_best_match_lyric(&self, keyword: &str, length: u64) -> Result<SearchLyricsInfo> {
-        let data = search(keyword).await?;
-        let all_song = data.pointer("/result/songs")
-            .ok_or(anyhow::anyhow!("No /result/songs path in json"))?
-            .as_array()
-            .ok_or(anyhow::anyhow!("Not an array"))?;
-
-        let mut match_song = all_song.first()
-            .ok_or(anyhow::anyhow!("No songs found"))?;
-
-        for song in all_song {
-            if song["dt"].as_u64().unwrap() == length {
-                match_song = song;
-                break;
-            }
-        }
-
-        let delta_abs = (match_song["dt"].as_i64().unwrap() - length as i64).abs();
-
-        let id = match_song["id"].to_string();
-        let lyric_text = get_lyric(id.as_str()).await?;
-
-        let lyrics = SearchLyricsInfo {
-            source: String::from("netease"),
-            lyrics: SearchLyricsInfo::parse_lyric(&lyric_text),
-            // fallback,
-            delta_abs,
-        };
-        Ok(lyrics)
-    }
-}
-
 async fn get_lyric(id: &str) -> Result<String> {
     let url = "https://music.163.com/weapi/song/lyric";
     let data = json!({
@@ -163,6 +127,46 @@ async fn search(keyword: &str) -> Result<Value> {
 
     let json: Value = resp.json().await?;
     Ok(json)
+}
+
+pub struct NeteaseLyricsProvider {}
+
+#[async_trait]
+impl LyricsProviderTrait for NeteaseLyricsProvider {
+    // 获取歌词源名称
+    fn get_source_name(&self) -> String {
+        String::from("netease")
+    }
+    async fn get_best_match_lyric(&self, keyword: &str, length: u64) -> Result<SearchLyricsInfo> {
+        let data = search(keyword).await?;
+        let all_song = data.pointer("/result/songs")
+            .ok_or(anyhow::anyhow!("No /result/songs path in json"))?
+            .as_array()
+            .ok_or(anyhow::anyhow!("Not an array"))?;
+
+        let mut match_song = all_song.first()
+            .ok_or(anyhow::anyhow!("No songs found"))?;
+
+        for song in all_song {
+            if song["dt"].as_u64().unwrap() == length {
+                match_song = song;
+                break;
+            }
+        }
+
+        let delta_abs = (match_song["dt"].as_i64().unwrap() - length as i64).abs();
+
+        let id = match_song["id"].to_string();
+        let lyric_text = get_lyric(id.as_str()).await?;
+
+        let lyrics = SearchLyricsInfo {
+            source: String::from("netease"),
+            lyrics: SearchLyricsInfo::parse_lyric(&lyric_text),
+            // fallback,
+            delta_abs,
+        };
+        Ok(lyrics)
+    }
 }
 
 #[cfg(test)]

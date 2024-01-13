@@ -61,6 +61,7 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
     let player_finder = PlayerFinder::new().unwrap();
     let mut current_player;
     let mut all_provider_failed = false;
+    let mut last_song_name = String::new();
     loop {
         // 根据当前播放器的名字获取当前播放器
         let current_player_name = shared_data
@@ -104,13 +105,16 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
         let mut lyrics_info = shared_data.lyrics_info.lock().unwrap();
 
         // 歌曲未变，但是上次获取歌词所有源全部失败，继续循环，避免重复发请求
-        if song_name == lyrics_info.title && all_provider_failed {
+        if song_name == last_song_name && all_provider_failed {
             thread::sleep(Duration::from_millis(refresh_interval));
             continue;
         }
 
         // 切歌时更新歌词信息
-        if song_name != lyrics_info.title {
+        if song_name != last_song_name {
+            // 强制记录一下，主要是为了下面所有歌词源都失败时的判断，避免重复发请求
+            last_song_name = song_name.to_string();
+
             let netease_provider = api::netease::NeteaseLyricsProvider {};
             let qq_provider = api::qq::QQMusicLyricsProvider {};
 
@@ -127,7 +131,8 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
                     match search_lyrics_info {
                         Ok(search_lyrics_info) => Some(search_lyrics_info),
                         Err(err) => {
-                            println!("获取歌词失败: {:?}", err);
+                            // 只打印错误信息，不打印堆栈
+                            println!("[{}]源获取歌词失败: {}", provider.get_source_name(), err.to_string());
                             None
                         }
                     }
@@ -138,7 +143,7 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
             // 如果所有歌词源都失败，打印错误信息，继续循环
             all_provider_failed = search_lyrics_info_list.is_empty();
             if all_provider_failed {
-                println!("所有歌词源都失败，正在重试...");
+                println!("所有歌词源都失败");
                 thread::sleep(Duration::from_millis(refresh_interval));
                 continue;
             }

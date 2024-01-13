@@ -55,6 +55,8 @@ impl SearchLyricsInfo {
 
 #[async_trait]
 pub trait LyricsProviderTrait {
+    // 获取歌词源名称
+    fn get_source_name(&self) -> String;
     async fn get_best_match_lyric(&self, keyword: &str, length: u64) -> Result<SearchLyricsInfo>;
 }
 
