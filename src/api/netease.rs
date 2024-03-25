@@ -3,7 +3,6 @@
 use std::time::Duration;
 use async_trait::async_trait;
 use base64::{engine::general_purpose, Engine as _};
-use hex;
 use openssl::rsa::{Padding, Rsa};
 use openssl::symm::{encrypt, Cipher};
 use rand::Rng;

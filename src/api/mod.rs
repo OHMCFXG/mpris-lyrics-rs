@@ -1,8 +1,8 @@
-use regex::Regex;
 use std::collections::BTreeMap;
-use async_trait::async_trait;
+
 use anyhow::Result;
-// use thiserror::Error;
+use async_trait::async_trait;
+use regex::Regex;
 
 pub mod netease;
 pub mod qq;
@@ -63,10 +63,6 @@ pub trait LyricsProviderTrait {
 
 #[cfg(test)]
 mod tests {
-    use crate::api::netease::NeteaseLyricsProvider;
-
-    use super::*;
-
     // #[test]
     // fn test_parse_lyric() {
     //     let lyric = qq::get_lyric("003QrvzS3248Wi");

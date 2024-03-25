@@ -1,14 +1,11 @@
 use std::sync::{Arc, Mutex};
 use std::{fs, thread};
-
 use std::collections::BTreeMap;
 use std::time::Duration;
-
+use serde::Deserialize;
 use mpris::PlayerFinder;
 
 mod api;
-
-use serde::Deserialize;
 
 use crate::api::LyricsProviderTrait;
 
@@ -41,13 +38,13 @@ fn find_current_player(
     // 遍历 white list
     for player_name in white_list {
         // 查找当前所有正在播放音频的player, 检查是否存在白名单关键字
-        let players = finder.find_all().unwrap();
+        let players = finder.find_all()?;
         for player in players {
             if player
                 .identity()
                 .to_ascii_lowercase()
                 .contains(&player_name.to_ascii_lowercase())
-                && player.get_playback_status().unwrap() == mpris::PlaybackStatus::Playing
+                && player.get_playback_status()? == mpris::PlaybackStatus::Playing
             {
                 return Ok(player);
             }
@@ -166,8 +163,6 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
 
             let search_lyrics_info = sorted_lyrics_info_list.first();
 
-            // println!("使用歌词源: {}", search_lyrics_info.unwrap().source);
-
             lyrics_info.title = song_name.to_string();
             lyrics_info.artist = artist.to_string();
             lyrics_info.length = length as u64;
@@ -185,7 +180,6 @@ fn display_lyrics(shared_data: Arc<Mutex<SharedData>>, refresh_interval: u64, so
         let lyrics = lyrics_info.lyrics.clone();
 
         // 查找最近的歌词，歌词时间小于等于当前播放时间
-        // let current_lyric = lyrics.range(..=position as u64).max_by_key(|(&key, _)| key).map(|(_, &ref value)| value).unwrap();
         let current_lyric = lyrics
             .range(..=position as u64)
             .next_back()
