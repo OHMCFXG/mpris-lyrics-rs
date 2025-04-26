@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
-use log::{debug, error, info, warn};
+use anyhow::Result;
+use log::{debug, error, warn};
 use mpris::{PlaybackStatus as MprisPlaybackStatus, Player, PlayerFinder, TrackID};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::time::{self};
@@ -82,10 +82,9 @@ impl MprisListener {
             Self::fetch_current_player_states(blacklist).await?;
 
         let mut events_to_send = Vec::new();
-        let mut active_player_event = None;
 
         // 2. 与缓存状态比较，生成事件
-        {
+        let active_player_event = {
             let mut player_states_guard = player_states_arc.lock().unwrap();
             let mut active_player_name_guard = active_player_name_arc.lock().unwrap();
 
@@ -97,7 +96,7 @@ impl MprisListener {
             );
 
             // 确定新的活跃播放器
-            active_player_event = determine_and_update_active_player(
+            let active_event = determine_and_update_active_player(
                 &current_playing_players,
                 &current_paused_players,
                 &current_states_data,
@@ -106,7 +105,9 @@ impl MprisListener {
 
             // 更新状态缓存
             *player_states_guard = current_states_data;
-        } // 锁释放
+
+            active_event
+        }; // 锁释放
 
         // 3. 发送事件
         // 先发送基础事件（包括TrackChanged）
@@ -153,7 +154,7 @@ impl MprisListener {
                     continue;
                 }
 
-                let (state, status) = match Self::get_player_state(&player) {
+                let (state, _status) = match Self::get_player_state(&player) {
                     (state, Some(PlaybackStatus::Playing)) => {
                         playing_players.push(identity.clone());
                         (state, Some(PlaybackStatus::Playing))

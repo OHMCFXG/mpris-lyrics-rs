@@ -1,5 +1,5 @@
 use anyhow::Result;
-use colored::{Color, Colorize};
+use colored::Colorize;
 use std::io::{self, Write};
 
 /// 将文本着色
