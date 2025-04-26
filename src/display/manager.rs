@@ -9,6 +9,8 @@ use tokio::sync::mpsc::Receiver;
 use tokio::time;
 
 use crate::config::Config;
+use crate::display::formatter;
+use crate::display::renderer;
 use crate::lyrics::LyricsManager;
 use crate::mpris::{PlaybackStatus, PlayerEvent, TrackInfo};
 
@@ -184,8 +186,13 @@ impl DisplayManager {
 
                     // 尝试从LyricsManager获取当前播放器的轨道信息
                     if let Some(track_info) = self.lyrics_manager.get_track_info(&player_name) {
+                        debug!(
+                            "获取到活跃播放器曲目信息: {} - {}",
+                            track_info.title, track_info.artist
+                        );
                         self.current_track = Some(track_info);
                     } else {
+                        debug!("未获取到活跃播放器曲目信息");
                         // 如果找不到轨道信息，清除当前轨道
                         self.current_track = None;
                     }
@@ -202,6 +209,19 @@ impl DisplayManager {
                         self.last_update = chrono::Utc::now().timestamp_millis() as u64;
                     }
 
+                    // 播放器变更时刷新显示
+                    self.refresh_display()?;
+                } else {
+                    // 即使播放器没有变化，也更新状态
+                    self.current_status = status;
+
+                    // 根据状态更新 last_update
+                    if self.current_status == PlaybackStatus::Playing {
+                        self.last_update = chrono::Utc::now().timestamp_millis() as u64;
+                    } else {
+                        self.last_update = 0;
+                    }
+
                     // 刷新显示
                     self.refresh_display()?;
                 }
@@ -211,37 +231,29 @@ impl DisplayManager {
         Ok(())
     }
 
-    /// 刷新显示
+    /// 刷新显示内容
     fn refresh_display(&mut self) -> Result<()> {
         // 检查是否使用简单输出模式
         if self.config.display.simple_output {
-            // 使用简单输出模式
             return self.refresh_display_simple();
         }
 
-        // 正常输出模式
-        // 根据配置决定是否清屏
-        // 注：我们暂时使用show_progress字段作为清屏标志
-        if self.config.display.show_progress {
-            // 清屏
-            print!("\x1B[2J\x1B[1;1H");
-            io::stdout().flush()?;
-        } else {
-            // 不清屏，只打印分隔符
-            println!("\n{}", "-".repeat(50));
-            println!("当前歌词显示 (--no-clear 模式):");
-            println!("{}", "-".repeat(50));
-        }
-
-        // 当没有播放器或轨道时显示空闲信息
-        if self.current_player.is_none() || self.current_track.is_none() {
-            println!("等待播放器...");
+        // 如果进度条显示已禁用（例如 --no-clear 模式），则直接返回
+        // 在这种模式下，显示管理器只响应特定事件，如轨道变更，而不会定期刷新显示
+        if !self.config.display.show_progress {
             return Ok(());
         }
 
-        // 显示当前播放信息
+        // 清屏
+        print!("\x1B[2J\x1B[1;1H");
+        io::stdout().flush()?;
+
+        // 显示轨道信息
         if let Some(track) = &self.current_track {
             self.display_track_info(track)?;
+        } else {
+            // 如果没有轨道信息，显示等待消息
+            println!("没有正在播放的歌曲");
         }
 
         // 显示播放状态
@@ -250,83 +262,45 @@ impl DisplayManager {
         // 显示歌词
         self.display_lyrics()?;
 
+        // 刷新输出
+        io::stdout().flush()?;
+
         Ok(())
     }
 
-    /// 简单输出模式的显示刷新
+    /// 简单输出模式刷新
     fn refresh_display_simple(&mut self) -> Result<()> {
-        // 获取播放状态（仅用于内部逻辑，不输出）
-        let status = match self.current_status {
-            PlaybackStatus::Playing => "playing",
-            PlaybackStatus::Paused => "paused",
-            PlaybackStatus::Stopped => "stopped",
-        };
+        let lyric_advance_time = self.config.display.lyric_advance_time;
+        let position_with_advance = self.current_position + lyric_advance_time;
 
-        // 没有播放器或曲目时，输出空行
-        if self.current_player.is_none() || self.current_track.is_none() {
-            // 在停止状态时不输出任何内容
-            if status == "stopped" && self.last_output != "" {
-                println!("");
-                self.last_output = "".to_string();
+        // 如果停止播放，或者没有播放器，显示默认信息
+        if self.current_status != PlaybackStatus::Playing || self.current_player.is_none() {
+            let output = "没有正在播放的歌曲".to_string();
+            // 避免输出相同的内容
+            if output != self.last_output {
+                println!("{}", output);
+                self.last_output = output;
             }
             return Ok(());
         }
 
-        // 获取曲目信息，但不再输出
-        if let Some(_track) = &self.current_track {
-            // 计算提前显示的位置
-            let advanced_position = self.current_position + self.config.display.lyric_advance_time;
-
-            // 获取当前歌词（使用提前的位置）
-            let current_lyric = self.lyrics_manager.get_lyric_at_time(advanced_position);
-
-            // 检查当前歌词是否为空
-            let mut lyric_text = String::new();
-
-            if let Some(line) = current_lyric {
-                // 如果当前歌词非空，则使用它
-                if !line.text.trim().is_empty() {
-                    lyric_text = line.text.clone();
+        // 如果有歌词，尝试获取当前行
+        let current_lyric = self
+            .lyrics_manager
+            .get_lyric_at_time(position_with_advance)
+            .map(|line| line.text)
+            .unwrap_or_else(|| {
+                if let Some(track) = &self.current_track {
+                    format!("{} - {}", track.title, track.artist)
                 } else {
-                    // 当前歌词为空，保持使用上次的非空输出
-                    // 如果last_output不为空，就继续使用之前的输出
-                    if !self.last_output.is_empty() {
-                        // 不更新输出，保持上次的输出
-                        return Ok(());
-                    }
+                    "无歌词".to_string()
                 }
-            }
+            });
 
-            // 如果lyric_text为空，尝试从整个歌词中找一个非空行
-            if lyric_text.is_empty() {
-                if let Some(lyrics) = self.lyrics_manager.get_current_lyrics() {
-                    for line in &lyrics.lines {
-                        if !line.text.trim().is_empty() {
-                            lyric_text = line.text.clone();
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // 如果依然没有找到非空歌词，且上次输出不为空，则保持上次输出
-            if lyric_text.is_empty() && !self.last_output.is_empty() {
-                return Ok(());
-            }
-
-            // 当暂停时不输出新歌词
-            if status == "paused" {
-                return Ok(());
-            }
-
-            // 只有播放中才输出歌词，并且只有当歌词内容变化时才输出
-            if status == "playing" && !lyric_text.is_empty() {
-                // 只输出歌词文本
-                if lyric_text != self.last_output {
-                    println!("{}", lyric_text);
-                    self.last_output = lyric_text;
-                }
-            }
+        // 避免输出相同的内容
+        if current_lyric != self.last_output {
+            println!("{}", current_lyric);
+            self.last_output = current_lyric;
         }
 
         Ok(())
@@ -334,161 +308,178 @@ impl DisplayManager {
 
     /// 显示轨道信息
     fn display_track_info(&self, track: &TrackInfo) -> Result<()> {
-        let title = track.title.bold();
-        let artist = track.artist.cyan();
-        let album = track.album.green();
+        println!(
+            "当前播放: {} - {} / {}",
+            track.title.bold(),
+            track.artist.bold(),
+            track.album
+        );
 
-        println!("{} - {} ({})", title, artist, album);
-        println!();
-
-        if let Some(player) = &self.current_player {
-            println!("播放器: {}", player);
+        if let Some(current_player) = &self.current_player {
+            println!("播放器: {}", current_player);
         }
+
+        println!("长度: {}", formatter::format_time(track.length_ms));
+        println!();
 
         Ok(())
     }
 
     /// 显示播放状态
     fn display_status(&self) -> Result<()> {
-        let status_str = match self.current_status {
-            PlaybackStatus::Playing => "▶ 播放中".green(),
-            PlaybackStatus::Paused => "⏸ 已暂停".yellow(),
-            PlaybackStatus::Stopped => "⏹ 已停止".red(),
+        // 显示播放位置
+        let position_str = formatter::format_time(self.current_position);
+        let total_str = match &self.current_track {
+            Some(track) if track.length_ms > 0 => formatter::format_time(track.length_ms),
+            _ => "未知".to_string(),
         };
 
+        match self.current_status {
+            PlaybackStatus::Playing => print!("▶ "),
+            PlaybackStatus::Paused => print!("⏸ "),
+            PlaybackStatus::Stopped => print!("⏹ "),
+        }
+
+        println!("{} / {}", position_str, total_str);
+
+        // 显示进度条
         if let Some(track) = &self.current_track {
-            let position_str = format_time(self.current_position);
-            let duration_str = format_time(track.length_ms);
-
-            let progress = if track.length_ms > 0 {
-                (self.current_position as f64 / track.length_ms as f64 * 100.0).round()
-            } else {
-                0.0
-            };
-
-            println!(
-                "{} [{}/{}] {:.0}%",
-                status_str, position_str, duration_str, progress
-            );
-        } else {
-            println!("{}", status_str);
+            if track.length_ms > 0 {
+                renderer::render_progress_bar(self.current_position, track.length_ms)?;
+            }
         }
 
         println!();
-
         Ok(())
     }
 
     /// 显示歌词
     fn display_lyrics(&self) -> Result<()> {
-        // 获取当前歌词
-        if let Some(lyrics) = self.lyrics_manager.get_current_lyrics() {
-            // 计算提前显示的位置
-            let advanced_position = self.current_position + self.config.display.lyric_advance_time;
+        // 加上提前显示时间
+        let lyric_advance_time = self.config.display.lyric_advance_time;
+        let position_with_advance = self.current_position + lyric_advance_time;
 
-            // 使用提前的位置查找歌词行
-            let current_line = self.lyrics_manager.get_lyric_at_time(advanced_position);
+        let lyrics = self.lyrics_manager.get_current_lyrics();
 
-            // 如果找到当前行，显示上下文
-            if let Some(current) = current_line {
-                // 找到当前行在歌词中的索引
-                let mut current_index = 0;
+        // 1. 如果没有歌词，显示提示
+        if lyrics.is_none() {
+            println!("没有可用的歌词");
+            return Ok(());
+        }
+
+        let lyrics = lyrics.unwrap();
+        if lyrics.lines.is_empty() {
+            println!("歌词为空");
+            return Ok(());
+        }
+
+        // 调试输出当前播放位置
+        debug!(
+            "当前播放位置: {}ms (加上提前时间: {}ms)",
+            self.current_position, position_with_advance
+        );
+
+        // 2. 寻找当前行 - 修改查找逻辑
+        let mut current_index = 0;
+        let mut found_exact_match = false;
+
+        // 首先尝试找到一个精确匹配的行（当前时间在其开始和结束时间之间）
+        for (i, line) in lyrics.lines.iter().enumerate() {
+            // 如果当前时间在这一行的时间范围内
+            if line.start_time <= position_with_advance
+                && (line.end_time.is_none() || position_with_advance < line.end_time.unwrap())
+            {
+                current_index = i;
+                found_exact_match = true;
+                debug!(
+                    "找到匹配行 #{}: 开始={}, 结束={:?}, 文本={}",
+                    i, line.start_time, line.end_time, line.text
+                );
+                break;
+            }
+        }
+
+        // 如果没有找到精确匹配，使用最接近的行
+        if !found_exact_match {
+            if position_with_advance < lyrics.lines[0].start_time {
+                // 如果当前时间在第一行开始前，使用第一行
+                current_index = 0;
+                debug!(
+                    "当前时间在第一行开始前，使用第一行: 开始={}, 文本={}",
+                    lyrics.lines[0].start_time, lyrics.lines[0].text
+                );
+            } else {
+                // 找到最后一个开始时间不大于当前时间的行
                 for (i, line) in lyrics.lines.iter().enumerate() {
-                    if line.start_time == current.start_time && line.text == current.text {
+                    if line.start_time <= position_with_advance {
                         current_index = i;
+                    } else {
                         break;
                     }
                 }
+                debug!(
+                    "使用最近的行 #{}: 开始={}, 结束={:?}, 文本={}",
+                    current_index,
+                    lyrics.lines[current_index].start_time,
+                    lyrics.lines[current_index].end_time,
+                    lyrics.lines[current_index].text
+                );
+            }
+        }
 
-                // 计算上下文范围
-                let context_lines = self.config.display.context_lines;
-                let start = if current_index > context_lines {
-                    current_index - context_lines
+        // 3. 显示上下文行
+        let context_lines = self.config.display.context_lines;
+        let start_index = if current_index >= context_lines {
+            current_index - context_lines
+        } else {
+            0
+        };
+
+        let end_index = std::cmp::min(current_index + context_lines + 1, lyrics.lines.len());
+
+        // 打印歌词
+        for i in start_index..end_index {
+            let line = &lyrics.lines[i];
+            let line_text = &line.text;
+
+            // 如果是当前行，使用彩色显示
+            if i == current_index {
+                // 应用颜色
+                let color_name = &self.config.display.current_line_color;
+                let colored_text = renderer::colorize_text(line_text, color_name);
+
+                if self.config.display.show_timestamp {
+                    println!(
+                        "[{}] {}",
+                        formatter::format_time(line.start_time),
+                        colored_text
+                    );
                 } else {
-                    0
-                };
-
-                let end = if current_index + context_lines < lyrics.lines.len() {
-                    current_index + context_lines
-                } else {
-                    lyrics.lines.len() - 1
-                };
-
-                // 显示上下文歌词
-                for i in start..=end {
-                    let line = &lyrics.lines[i];
-                    let line_text = if i == current_index {
-                        // 当前行使用指定颜色
-                        match self.config.display.current_line_color.as_str() {
-                            "red" => line.text.red().bold(),
-                            "green" => line.text.green().bold(),
-                            "yellow" => line.text.yellow().bold(),
-                            "blue" => line.text.blue().bold(),
-                            "magenta" => line.text.magenta().bold(),
-                            "cyan" => line.text.cyan().bold(),
-                            "white" => line.text.white().bold(),
-                            _ => line.text.green().bold(),
-                        }
-                    } else {
-                        // 非当前行使用普通颜色
-                        line.text.normal()
-                    };
-
-                    // 是否显示时间戳
-                    if self.config.display.show_timestamp {
-                        let time_str = format_time(line.start_time);
-                        println!("[{}] {}", time_str, line_text);
-                    } else {
-                        println!("{}", line_text);
-                    }
+                    println!("▶ {}", colored_text);
                 }
             } else {
-                println!("暂无歌词...");
+                // 其他行正常显示
+                if self.config.display.show_timestamp {
+                    println!(
+                        "[{}] {}",
+                        formatter::format_time(line.start_time),
+                        line_text
+                    );
+                } else {
+                    println!("  {}", line_text);
+                }
             }
-        } else {
-            println!("未找到歌词");
         }
 
         Ok(())
     }
 
-    /// 检查是否为当前播放器
+    /// 检查是否是当前播放器
     fn is_current_player(&self, player_name: &str) -> bool {
-        if let Some(current) = &self.current_player {
-            // 使用更灵活的匹配逻辑
-            if current.to_lowercase() == player_name.to_lowercase() {
-                return true;
-            }
-
-            // 支持部分匹配 - Spotify特殊处理
-            if (current.to_lowercase().contains("spotify")
-                && player_name.to_lowercase() == "spotify")
-                || (current.to_lowercase() == "spotify"
-                    && player_name.to_lowercase().contains("spotify"))
-            {
-                return true;
-            }
-
-            // 部分匹配: 如果一个包含另一个
-            if current.to_lowercase().contains(&player_name.to_lowercase())
-                || player_name.to_lowercase().contains(&current.to_lowercase())
-            {
-                return true;
-            }
-
-            false
-        } else {
-            false
-        }
+        self.current_player
+            .as_ref()
+            .map_or(false, |p| p == player_name)
     }
-}
-
-/// 格式化时间（毫秒转为 mm:ss 格式）
-fn format_time(ms: u64) -> String {
-    let total_seconds = ms / 1000;
-    let minutes = total_seconds / 60;
-    let seconds = total_seconds % 60;
-    format!("{:02}:{:02}", minutes, seconds)
 }
 
 /// 运行显示管理器
@@ -497,18 +488,6 @@ pub async fn run_display_manager(
     lyrics_manager: LyricsManager,
     player_events: Receiver<PlayerEvent>,
 ) -> Result<()> {
-    // 创建显示管理器
     let mut display_manager = DisplayManager::new(config, lyrics_manager);
-
-    // 简单输出模式下，不输出初始状态信息
-    if !display_manager.config.display.simple_output {
-        // 标准模式下，显示欢迎信息
-        println!("MPRIS歌词显示器 - 等待播放器连接...");
-        println!();
-        println!("按 Ctrl+C 退出");
-        println!();
-    }
-
-    // 运行显示管理器
     display_manager.run(player_events).await
 }
