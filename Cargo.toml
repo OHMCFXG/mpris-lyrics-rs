@@ -1,0 +1,54 @@
+[package]
+name = "mpris-lyrics-rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["Contributor"]
+description = "A lyrics display program for Linux that synchronizes with music players via MPRIS"
+
+[dependencies]
+# MPRIS & D-Bus 相关
+mpris = "2.0.1"
+dbus = "0.9.7"
+
+# 异步运行时
+tokio = { version = "1.29.1", features = ["full"] }
+futures = "0.3.28"
+
+# 网络请求
+reqwest = { version = "0.11.18", features = ["json"] }
+
+# 序列化/反序列化
+serde = { version = "1.0.180", features = ["derive"] }
+serde_json = "1.0.104"
+
+# 配置文件处理
+config = "0.13.3"
+toml = "0.7.6"
+
+# 错误处理
+anyhow = "1.0.72"
+thiserror = "1.0.44"
+
+# 日志
+log = "0.4.19"
+env_logger = "0.10.0"
+
+# 终端输出美化
+colored = "2.0.4"
+
+# 时间处理
+chrono = "0.4.26"
+
+# 正则表达式
+regex = "1.9.1"
+
+# 文件系统
+dirs = "5.0.1"
+clap = { version = "4.5.37", features = ["derive"] }
+
+# 加密相关（网易云音乐API）
+base64 = "0.21.0"
+openssl = "0.10.55"
+rand = "0.8.5"
+hex = "0.4.3"
+async-trait = "0.1.68"
