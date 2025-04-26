@@ -52,3 +52,9 @@ openssl = "0.10.55"
 rand = "0.8.5"
 hex = "0.4.3"
 async-trait = "0.1.68"
+
+[profile.release]
+opt-level = 3
+strip = true
+lto = "thin"
+codegen-units = 1
