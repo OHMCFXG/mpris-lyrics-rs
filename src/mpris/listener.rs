@@ -83,6 +83,46 @@ impl MprisListener {
 
         let mut events_to_send = Vec::new();
 
+        // 检查是否没有找到任何播放器
+        if current_states_data.is_empty() {
+            // 检查之前是否有活跃播放器，只有在状态变化时才发送事件
+            let mut send_no_players_event = false;
+            {
+                let mut active_player_name_guard = active_player_name_arc.lock().unwrap();
+                if active_player_name_guard.is_some() {
+                    // 之前有活跃播放器，现在没有了，需要重置
+                    *active_player_name_guard = None;
+                    send_no_players_event = true;
+                } else {
+                    // 确保至少每30秒发送一次无播放器事件，即使状态没有变化
+                    // 使用静态变量或定时器可能更好，但这里简化处理
+                    static mut LAST_NO_PLAYERS_NOTIFICATION: u64 = 0;
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+
+                    // 安全的：此静态变量只在单线程上下文中访问
+                    unsafe {
+                        if now - LAST_NO_PLAYERS_NOTIFICATION >= 30 {
+                            send_no_players_event = true;
+                            LAST_NO_PLAYERS_NOTIFICATION = now;
+                        }
+                    }
+                }
+            }
+
+            if send_no_players_event {
+                debug!("未检测到任何播放器，发送NoPlayersAvailable事件");
+                if let Err(e) = sender.send(PlayerEvent::NoPlayersAvailable).await {
+                    error!("发送无播放器事件失败: {}", e);
+                }
+            }
+
+            // 由于没有播放器，不需要进一步处理
+            return Ok(());
+        }
+
         // 2. 与缓存状态比较，生成事件
         let active_player_event = {
             let mut player_states_guard = player_states_arc.lock().unwrap();
@@ -150,7 +190,12 @@ impl MprisListener {
 
             for player in player_list {
                 let identity = player.identity().to_string(); // 确保保存为String
-                if is_blacklisted(&identity, &blacklist_clone) {
+                                                              // 显式绑定 Option<String> 以延长其生命周期
+                let desktop_entry_opt: Option<String> = player.get_desktop_entry().ok().flatten();
+                // 从有生命周期的 Option<String> 获取 &str
+                let desktop_entry_ref: &str = desktop_entry_opt.as_deref().unwrap_or("");
+                if is_blacklisted(&identity, desktop_entry_ref, &blacklist_clone) {
+                    debug!("播放器 {} 在黑名单中，跳过", identity);
                     continue;
                 }
 
@@ -201,9 +246,17 @@ impl MprisListener {
 }
 
 /// 检查播放器是否在黑名单中
-fn is_blacklisted(player_name: &str, blacklist: &HashSet<String>) -> bool {
+fn is_blacklisted(identity: &str, desktop_entry: &str, blacklist: &HashSet<String>) -> bool {
+    let identity_lower = identity.to_lowercase();
+    let desktop_entry_lower = desktop_entry.to_lowercase();
+
     for pattern in blacklist {
-        if player_name.to_lowercase().contains(&pattern.to_lowercase()) {
+        let pattern_lower = pattern.to_lowercase();
+        if identity_lower.contains(&pattern_lower) || desktop_entry_lower.contains(&pattern_lower) {
+            debug!(
+                "播放器匹配黑名单模式 '{}': identity='{}', desktop_entry='{}'",
+                pattern, identity, desktop_entry
+            );
             return true;
         }
     }

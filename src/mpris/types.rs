@@ -28,6 +28,8 @@ pub enum PlayerEvent {
         /// 导致此播放器变为活跃的状态
         status: PlaybackStatus,
     },
+    /// 未检测到任何播放器事件
+    NoPlayersAvailable,
 }
 
 /// 播放状态

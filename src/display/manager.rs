@@ -226,6 +226,19 @@ impl DisplayManager {
                     self.refresh_display()?;
                 }
             }
+
+            PlayerEvent::NoPlayersAvailable => {
+                debug!("收到无播放器事件，清除当前播放状态");
+                // 清除所有当前状态
+                self.current_player = None;
+                self.current_track = None;
+                self.current_position = 0;
+                self.current_status = PlaybackStatus::Stopped;
+                self.last_update = 0;
+
+                // 刷新显示以显示无播放器提示
+                self.refresh_display()?;
+            }
         }
 
         Ok(())
@@ -248,12 +261,18 @@ impl DisplayManager {
         print!("\x1B[2J\x1B[1;1H");
         io::stdout().flush()?;
 
-        // 显示轨道信息
+        // 显示轨道信息或无播放器消息
         if let Some(track) = &self.current_track {
             self.display_track_info(track)?;
+        } else if self.current_player.is_none() {
+            // 如果没有活跃播放器，显示未发现播放器消息
+            println!("没有检测到任何播放器，请先启动一个媒体播放器");
+            println!("支持的播放器: VLC, Rhythmbox, Spotify, Audacious 等支持MPRIS的播放器");
+            println!();
         } else {
-            // 如果没有轨道信息，显示等待消息
+            // 有播放器但没有轨道信息的情况
             println!("没有正在播放的歌曲");
+            println!();
         }
 
         // 显示播放状态
@@ -273,34 +292,31 @@ impl DisplayManager {
         let lyric_advance_time = self.config.display.lyric_advance_time;
         let position_with_advance = self.current_position + lyric_advance_time;
 
-        // 如果停止播放，或者没有播放器，显示默认信息
-        if self.current_status != PlaybackStatus::Playing || self.current_player.is_none() {
-            let output = "没有正在播放的歌曲".to_string();
-            // 避免输出相同的内容
-            if output != self.last_output {
-                println!("{}", output);
-                self.last_output = output;
-            }
-            return Ok(());
-        }
-
-        // 如果有歌词，尝试获取当前行
-        let current_lyric = self
-            .lyrics_manager
-            .get_lyric_at_time(position_with_advance)
-            .map(|line| line.text)
-            .unwrap_or_else(|| {
-                if let Some(track) = &self.current_track {
-                    format!("{} - {}", track.title, track.artist)
-                } else {
-                    "无歌词".to_string()
-                }
-            });
+        // 确定显示什么内容
+        let output = if self.current_player.is_none() {
+            // 没有检测到任何播放器
+            "没有检测到媒体播放器".to_string()
+        } else if self.current_status != PlaybackStatus::Playing || self.current_track.is_none() {
+            // 有播放器但没有播放内容
+            "没有正在播放的歌曲".to_string()
+        } else {
+            // 有播放器和内容，显示歌词或曲目信息
+            self.lyrics_manager
+                .get_lyric_at_time(position_with_advance)
+                .map(|line| line.text)
+                .unwrap_or_else(|| {
+                    if let Some(track) = &self.current_track {
+                        format!("{} - {}", track.title, track.artist)
+                    } else {
+                        "无歌词".to_string()
+                    }
+                })
+        };
 
         // 避免输出相同的内容
-        if current_lyric != self.last_output {
-            println!("{}", current_lyric);
-            self.last_output = current_lyric;
+        if output != self.last_output {
+            println!("{}", output);
+            self.last_output = output;
         }
 
         Ok(())
