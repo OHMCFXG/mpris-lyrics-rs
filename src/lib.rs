@@ -1,3 +1,6 @@
+// 应用核心库
+
+// 模块导出
 pub mod app;
 pub mod config;
 pub mod display;

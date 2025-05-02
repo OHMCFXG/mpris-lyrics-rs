@@ -161,6 +161,10 @@ async fn forward_events(
                 }
                 skip_generic_send = true; // 跳过下面的通用发送
             }
+            mpris::PlayerEvent::NoPlayersAvailable => {
+                debug!("收到无播放器事件，转发给歌词管理器和显示管理器");
+                // 需要发送给两者
+            }
         }
 
         // 通用发送逻辑 (如果未被跳过)

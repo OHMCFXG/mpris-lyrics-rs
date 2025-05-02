@@ -88,7 +88,7 @@ impl Default for Config {
 
         Config {
             lyrics_sources: vec!["netease".to_string(), "qq".to_string(), "local".to_string()],
-            player_blacklist: ["firefox", "mozilla", "chromium", "chrome"]
+            player_blacklist: ["firefox", "mozilla", "chromium", "chrome", "kdeconnect"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
