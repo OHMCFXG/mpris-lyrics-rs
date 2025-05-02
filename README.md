@@ -47,7 +47,9 @@ mpris-lyrics-rs --simple-output
 
 ## Configuration
 
-Create a configuration file in one of these locations:
+A default configuration file will be automatically generated at `~/.config/mpris-lyrics-rs/config.toml` on the first run.
+
+You can place your configuration file in one of these locations:
 - `~/.config/mpris-lyrics-rs/config.toml`
 - Custom location specified with `--config` option
 
