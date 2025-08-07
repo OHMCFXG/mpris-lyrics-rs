@@ -1,8 +1,9 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use async_trait::async_trait;
 use log::{debug, info, warn};
+use tokio::fs;
 
 use crate::config::LocalConfig;
 use crate::lyrics::{LyricLine, Lyrics, LyricsMetadata, LyricsProvider};
@@ -32,10 +33,18 @@ impl LocalProvider {
     }
 
     /// 在歌词目录中查找匹配的LRC文件
-    fn find_matching_lrc(&self, track: &TrackInfo) -> Result<Option<PathBuf>> {
+    async fn find_matching_lrc(&self, track: &TrackInfo) -> Result<Option<PathBuf>> {
         // 确保歌词目录存在
-        if !self.lyrics_path.exists() || !self.lyrics_path.is_dir() {
-            warn!("歌词目录不存在或不是目录: {:?}", self.lyrics_path);
+        let metadata = match fs::metadata(&self.lyrics_path).await {
+            Ok(meta) => meta,
+            Err(_) => {
+                warn!("歌词目录不存在: {:?}", self.lyrics_path);
+                return Ok(None);
+            }
+        };
+
+        if !metadata.is_dir() {
+            warn!("歌词路径不是一个目录: {:?}", self.lyrics_path);
             return Ok(None);
         }
 
@@ -46,11 +55,10 @@ impl LocalProvider {
         debug!("生成的可能文件名: {:?}", possible_names);
 
         // 遍历目录查找匹配的文件
-        let entries = fs::read_dir(&self.lyrics_path)?;
+        let mut entries = fs::read_dir(&self.lyrics_path).await?;
         let mut candidates = Vec::new();
 
-        for entry in entries {
-            let entry = entry?;
+        while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
 
             if path.is_file() && path.extension().map_or(false, |ext| ext == "lrc") {
@@ -129,8 +137,8 @@ impl LocalProvider {
     }
 
     /// 解析LRC文件为歌词对象
-    fn parse_lrc_file(&self, path: &Path, track: &TrackInfo) -> Result<Lyrics> {
-        let content = fs::read_to_string(path)?;
+    async fn parse_lrc_file(&self, path: &Path, track: &TrackInfo) -> Result<Lyrics> {
+        let content = fs::read_to_string(path).await?;
         let (time_lyrics, metadata) = LrcParser::parse(&content)?;
 
         // 从解析结果构建歌词对象
@@ -164,25 +172,26 @@ impl LocalProvider {
     }
 }
 
+#[async_trait]
 impl LyricsProvider for LocalProvider {
     fn name(&self) -> &str {
         "local"
     }
 
-    fn search_lyrics(&self, track: &TrackInfo) -> Result<Option<Lyrics>> {
+    async fn search_lyrics(&self, track: &TrackInfo) -> Result<Option<Lyrics>> {
         // 如果标题为空，无法搜索
         if track.title.trim().is_empty() {
             return Ok(None);
         }
 
         // 查找匹配的LRC文件
-        let lrc_path = match self.find_matching_lrc(track)? {
+        let lrc_path = match self.find_matching_lrc(track).await? {
             Some(path) => path,
             None => return Ok(None),
         };
 
         // 解析LRC文件
-        match self.parse_lrc_file(&lrc_path, track) {
+        match self.parse_lrc_file(&lrc_path, track).await {
             Ok(lyrics) => {
                 if lyrics.lines.is_empty() {
                     debug!("本地歌词文件解析结果为空: {:?}", lrc_path);

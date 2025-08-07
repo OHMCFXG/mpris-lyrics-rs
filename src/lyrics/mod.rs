@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::config::Config;
 use crate::mpris::TrackInfo;
 use anyhow::Result;
+use async_trait::async_trait;
 
 pub use manager::LyricsManager;
 
@@ -46,12 +47,13 @@ pub struct LyricsMetadata {
 }
 
 /// 歌词提供者接口
+#[async_trait]
 pub trait LyricsProvider: Send + Sync {
     /// 获取提供者名称
     fn name(&self) -> &str;
 
     /// 搜索歌词
-    fn search_lyrics(&self, track: &TrackInfo) -> Result<Option<Lyrics>>;
+    async fn search_lyrics(&self, track: &TrackInfo) -> Result<Option<Lyrics>>;
 }
 
 /// 设置歌词管理器

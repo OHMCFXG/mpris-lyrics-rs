@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use log::{debug, error, warn};
 use mpris::{PlaybackStatus as MprisPlaybackStatus, Player, PlayerFinder, TrackID};
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::broadcast::{self, Sender};
 use tokio::time::{self};
 
 use crate::config::Config;
@@ -114,9 +114,8 @@ impl MprisListener {
 
             if send_no_players_event {
                 debug!("未检测到任何播放器，发送NoPlayersAvailable事件");
-                if let Err(e) = sender.send(PlayerEvent::NoPlayersAvailable).await {
-                    error!("发送无播放器事件失败: {}", e);
-                }
+                // 对于broadcast channel，如果没有接收者，发送会失败，这是正常情况
+                let _ = sender.send(PlayerEvent::NoPlayersAvailable);
             }
 
             // 由于没有播放器，不需要进一步处理
@@ -152,17 +151,12 @@ impl MprisListener {
         // 3. 发送事件
         // 先发送基础事件（包括TrackChanged）
         for event in events_to_send {
-            if let Err(e) = sender.send(event).await {
-                error!("发送播放器事件失败: {}", e);
-                // 通道关闭可能意味着退出，记录错误但允许循环继续尝试
-            }
+            let _ = sender.send(event);
         }
 
         // 然后发送活跃播放器变更事件
         if let Some(active_event) = active_player_event {
-            if let Err(e) = sender.send(active_event).await {
-                error!("发送活跃播放器变更事件失败: {}", e);
-            }
+            let _ = sender.send(active_event);
         }
 
         Ok(())
@@ -309,9 +303,9 @@ fn get_playback_status(player: &Player) -> Result<PlaybackStatus> {
 }
 
 /// 设置MPRIS监听器并返回事件接收通道
-pub fn setup_mpris_listener(config: &Arc<Config>) -> Result<Receiver<PlayerEvent>> {
-    let (tx, rx) = mpsc::channel(100);
-    let listener = MprisListener::new(tx, config);
+pub fn setup_mpris_listener(config: &Arc<Config>) -> Result<Sender<PlayerEvent>> {
+    let (tx, _) = broadcast::channel(100);
+    let listener = MprisListener::new(tx.clone(), config);
     listener.start_polling_task();
-    Ok(rx)
+    Ok(tx)
 }

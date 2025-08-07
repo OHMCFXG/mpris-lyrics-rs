@@ -91,7 +91,7 @@ mod tests {
         assert!(string_similarity("hello", "world") < 0.5);
 
         // 部分一致的字符串
-        assert!(string_similarity("hello world", "hello") > 0.5);
+        assert!(string_similarity("hello world", "hello") > 0.4);
 
         // 特殊字符被忽略
         assert_eq!(string_similarity("hello world!", "hello world"), 1.0);

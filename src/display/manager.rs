@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use colored::Colorize;
-use log::debug;
-use tokio::sync::mpsc::Receiver;
+use log::{debug, warn};
+use tokio::sync::broadcast::Receiver;
 use tokio::time;
 
 use crate::config::Config;
@@ -83,11 +83,21 @@ impl DisplayManager {
                 }
 
                 // 处理播放器事件
-                Some(event) = player_events.recv() => {
-                    self.handle_player_event(event)?;
+                event = player_events.recv() => {
+                    match event {
+                        Ok(event) => self.handle_player_event(event)?,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            warn!("显示管理器事件通道落后 {} 条消息", n);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            // 通道关闭，退出循环
+                            break;
+                        }
+                    }
                 }
             }
         }
+        Ok(())
     }
 
     /// 处理播放器事件

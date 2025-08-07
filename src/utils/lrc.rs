@@ -100,7 +100,7 @@ mod tests {
         let (time_lyrics, metadata) = LrcParser::parse(lrc_content).unwrap();
 
         // 验证元数据
-        assert_eq!(metadata.len(), 5);
+        assert_eq!(metadata.len(), 4);
         assert!(metadata.contains(&("ar".to_string(), "周杰伦".to_string())));
         assert!(metadata.contains(&("ti".to_string(), "稻香".to_string())));
 

@@ -351,80 +351,75 @@ impl LyricsProvider for NeteaseProvider {
         "netease"
     }
 
-    fn search_lyrics(&self, track: &TrackInfo) -> Result<Option<Lyrics>> {
-        // 使用tokio阻塞因为async不能直接在trait中使用
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                if track.title.is_empty() {
-                    debug!("歌曲标题为空，跳过网易云音乐搜索");
+    async fn search_lyrics(&self, track: &TrackInfo) -> Result<Option<Lyrics>> {
+        if track.title.is_empty() {
+            debug!("歌曲标题为空，跳过网易云音乐搜索");
+            return Ok(None);
+        }
+
+        // 构建搜索关键词
+        let keyword = if track.artist.is_empty() {
+            track.title.clone()
+        } else {
+            format!("{} {}", track.title, track.artist)
+        };
+
+        // 执行搜索
+        debug!("开始网易云音乐搜索: {}", keyword);
+        let result = match self.search(&keyword).await {
+            Ok(result) => result,
+            Err(e) => {
+                error!("网易云音乐搜索失败: {}", e);
+                return Err(anyhow!("网易云音乐搜索失败: {}", e));
+            }
+        };
+
+        // 查找最佳匹配
+        let song_id = match self.find_best_match(&result, track).await {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                debug!("未找到匹配的网易云音乐歌曲");
+                return Ok(None);
+            }
+            Err(e) => {
+                error!("查找最佳匹配失败: {}", e);
+                return Err(anyhow!("查找最佳匹配失败: {}", e));
+            }
+        };
+
+        // 获取歌词
+        let lyric_text = match self.get_lyric(&song_id).await {
+            Ok(text) => text,
+            Err(e) => {
+                error!("获取网易云音乐歌词失败: {}", e);
+                return Err(anyhow!("获取网易云音乐歌词失败: {}", e));
+            }
+        };
+
+        // 解析歌词
+        match self.parse_lrc(&lyric_text, track) {
+            Ok(lyrics) => {
+                // 检查歌词行数，如果为0则视为未找到有效歌词
+                if lyrics.lines.is_empty() {
+                    debug!(
+                        "网易云音乐返回了空歌词: {} - {}, 将继续尝试其他提供者",
+                        track.title, track.artist
+                    );
                     return Ok(None);
                 }
 
-                // 构建搜索关键词
-                let keyword = if track.artist.is_empty() {
-                    track.title.clone()
-                } else {
-                    format!("{} {}", track.title, track.artist)
-                };
-
-                // 执行搜索
-                debug!("开始网易云音乐搜索: {}", keyword);
-                let result = match self.search(&keyword).await {
-                    Ok(result) => result,
-                    Err(e) => {
-                        error!("网易云音乐搜索失败: {}", e);
-                        return Err(anyhow!("网易云音乐搜索失败: {}", e));
-                    }
-                };
-
-                // 查找最佳匹配
-                let song_id = match self.find_best_match(&result, track).await {
-                    Ok(Some(id)) => id,
-                    Ok(None) => {
-                        debug!("未找到匹配的网易云音乐歌曲");
-                        return Ok(None);
-                    }
-                    Err(e) => {
-                        error!("查找最佳匹配失败: {}", e);
-                        return Err(anyhow!("查找最佳匹配失败: {}", e));
-                    }
-                };
-
-                // 获取歌词
-                let lyric_text = match self.get_lyric(&song_id).await {
-                    Ok(text) => text,
-                    Err(e) => {
-                        error!("获取网易云音乐歌词失败: {}", e);
-                        return Err(anyhow!("获取网易云音乐歌词失败: {}", e));
-                    }
-                };
-
-                // 解析歌词
-                match self.parse_lrc(&lyric_text, track) {
-                    Ok(lyrics) => {
-                        // 检查歌词行数，如果为0则视为未找到有效歌词
-                        if lyrics.lines.is_empty() {
-                            debug!(
-                                "网易云音乐返回了空歌词: {} - {}, 将继续尝试其他提供者",
-                                track.title, track.artist
-                            );
-                            return Ok(None);
-                        }
-
-                        info!(
-                            "成功获取网易云音乐歌词: {} - {}, 共{}行",
-                            track.title,
-                            track.artist,
-                            lyrics.lines.len()
-                        );
-                        Ok(Some(lyrics))
-                    }
-                    Err(e) => {
-                        error!("解析网易云音乐歌词失败: {}", e);
-                        Err(anyhow!("解析网易云音乐歌词失败: {}", e))
-                    }
-                }
-            })
-        })
+                info!(
+                    "成功获取网易云音乐歌词: {} - {}, 共{}行",
+                    track.title,
+                    track.artist,
+                    lyrics.lines.len()
+                );
+                Ok(Some(lyrics))
+            }
+            Err(e) => {
+                error!("解析网易云音乐歌词失败: {}", e);
+                Err(anyhow!("解析网易云音乐歌词失败: {}", e))
+            }
+        }
     }
 }
