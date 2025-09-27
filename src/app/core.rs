@@ -61,8 +61,9 @@ impl App {
 
         // 根据配置选择界面模式
         let display_handle = if self.config.display.simple_output || !self.config.display.enable_tui {
-            // 简单输出模式：使用传统显示管理器
+            // 简单输出模式：使用传统显示管理器（自动切换模式）
             debug!("启动传统显示管理器（简单输出模式）...");
+            lyrics_manager.set_manual_mode(false); // Simple-output模式使用自动切换
             let config_clone = Arc::clone(&self.config);
             tokio::spawn(async move {
                 info!("开始显示歌词（简单输出模式）...");
@@ -73,8 +74,9 @@ impl App {
                 }
             })
         } else {
-            // TUI 模式：使用新的 ratatui 界面
+            // TUI 模式：使用新的 ratatui 界面（手动切换模式）
             debug!("启动 TUI 界面...");
+            lyrics_manager.set_manual_mode(true); // TUI模式使用手动切换
             let config_clone = Arc::clone(&self.config);
             tokio::spawn(async move {
                 info!("开始 TUI 界面...");

@@ -292,25 +292,110 @@ impl DisplayManager {
         let lyric_advance_time = self.config.display.lyric_advance_time;
         let position_with_advance = self.current_position + lyric_advance_time;
 
+        // 调试信息：显示当前状态
+        debug!(
+            "[Simple-output] 当前播放器: {:?}, 状态: {:?}, 轨道: {}",
+            self.current_player,
+            self.current_status,
+            if self.current_track.is_some() {
+                "有"
+            } else {
+                "无"
+            }
+        );
+
+        // 检查歌词管理器的当前播放器状态
+        if let Some(lyrics_player) = self.lyrics_manager.get_current_player() {
+            debug!("[Simple-output] 歌词管理器当前播放器: {}", lyrics_player);
+            if let Some(lyrics_status) = self.lyrics_manager.get_player_status(&lyrics_player) {
+                debug!("[Simple-output] 歌词管理器播放器状态: {:?}", lyrics_status);
+            }
+        } else {
+            debug!("[Simple-output] 歌词管理器无当前播放器");
+        }
+
         // 确定显示什么内容
         let output = if self.current_player.is_none() {
             // 没有检测到任何播放器
+            debug!("[Simple-output] 输出：没有检测到媒体播放器");
             "没有检测到媒体播放器".to_string()
-        } else if self.current_status != PlaybackStatus::Playing || self.current_track.is_none() {
-            // 有播放器但没有播放内容
-            "没有正在播放的歌曲".to_string()
         } else {
-            // 有播放器和内容，显示歌词或曲目信息
-            self.lyrics_manager
-                .get_lyric_at_time(position_with_advance)
-                .map(|line| line.text)
-                .unwrap_or_else(|| {
-                    if let Some(track) = &self.current_track {
-                        format!("{} - {}", track.title, track.artist)
+            // 检查歌词管理器是否有更合适的播放器
+            if let Some(lyrics_player) = self.lyrics_manager.get_current_player() {
+                if let Some(lyrics_status) = self.lyrics_manager.get_player_status(&lyrics_player) {
+                    if lyrics_status == PlaybackStatus::Playing {
+                        // 歌词管理器有正在播放的播放器，尝试获取其歌词
+                        debug!("[Simple-output] 使用歌词管理器的播放器: {}", lyrics_player);
+
+                        // 如果显示管理器的当前播放器与歌词管理器不一致，需要同步
+                        if self.current_player.as_ref() != Some(&lyrics_player) {
+                            debug!(
+                                "[Simple-output] 同步播放器信息: {} -> {}",
+                                self.current_player.as_ref().unwrap_or(&"None".to_string()),
+                                lyrics_player
+                            );
+
+                            // 同步播放器信息
+                            self.current_player = Some(lyrics_player.clone());
+                            self.current_status = lyrics_status;
+
+                            // 获取轨道信息
+                            if let Some(track_info) =
+                                self.lyrics_manager.get_track_info(&lyrics_player)
+                            {
+                                self.current_track = Some(track_info);
+                                debug!("[Simple-output] 已同步轨道信息");
+                            } else {
+                                debug!("[Simple-output] 无法获取轨道信息");
+                                self.current_track = None;
+                            }
+
+                            // 重置位置
+                            self.current_position = 0;
+                            self.last_update = 0;
+                        }
+
+                        // 获取歌词或显示曲目信息
+                        self.lyrics_manager
+                            .get_lyric_at_time(position_with_advance)
+                            .map(|line| line.text)
+                            .unwrap_or_else(|| {
+                                if let Some(track) = &self.current_track {
+                                    format!("{} - {}", track.title, track.artist)
+                                } else {
+                                    "无歌词".to_string()
+                                }
+                            })
+                    } else if self.current_status == PlaybackStatus::Playing
+                        && self.current_track.is_some()
+                    {
+                        // 显示管理器的播放器正在播放，使用当前信息
+                        debug!("[Simple-output] 使用显示管理器的播放器信息");
+                        self.lyrics_manager
+                            .get_lyric_at_time(position_with_advance)
+                            .map(|line| line.text)
+                            .unwrap_or_else(|| {
+                                if let Some(track) = &self.current_track {
+                                    format!("{} - {}", track.title, track.artist)
+                                } else {
+                                    "无歌词".to_string()
+                                }
+                            })
                     } else {
-                        "无歌词".to_string()
+                        // 没有正在播放的歌曲
+                        debug!("[Simple-output] 输出：没有正在播放的歌曲");
+                        "没有正在播放的歌曲".to_string()
                     }
-                })
+                } else {
+                    // 无法获取播放器状态
+                    debug!("[Simple-output] 无法获取播放器状态");
+                    "没有正在播放的歌曲".to_string()
+                }
+            } else {
+                // 歌词管理器没有当前播放器
+                debug!("[Simple-output] 歌词管理器没有当前播放器");
+                "没有正在播放的歌曲".to_string()
+            }
         };
 
         // 避免输出相同的内容

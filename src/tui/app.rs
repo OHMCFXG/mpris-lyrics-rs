@@ -148,6 +148,10 @@ impl TuiApp {
                     log::info!("手动刷新歌词: {} - {}", track.title, track.artist);
                 }
             }
+            KeyCode::Tab => {
+                // Tab键切换播放器
+                self.switch_to_next_player().await?;
+            }
             KeyCode::Char('t') => {
                 // 切换时间戳显示
                 // TODO: 实现时间戳切换
@@ -165,19 +169,28 @@ impl TuiApp {
                 player_name,
                 track_info,
             } => {
-                self.ui_state.current_track = Some(track_info.clone());
-                self.ui_state.current_player = Some(player_name.clone());
+                // 只处理当前活跃播放器的轨道变更
+                if self.is_current_player(&player_name) {
+                    self.ui_state.current_track = Some(track_info.clone());
 
-                // 更新状态信息
-                self.ui_state.status_info.lyrics_source = Some("搜索中".to_string());
-                self.ui_state.status_info.source_status = SourceStatus::Loading;
+                    // 更新状态信息
+                    self.ui_state.status_info.lyrics_source = Some("搜索中".to_string());
+                    self.ui_state.status_info.source_status = SourceStatus::Loading;
 
-                log::info!(
-                    "轨道变更: {} - {} ({})",
-                    track_info.title,
-                    track_info.artist,
-                    player_name
-                );
+                    log::info!(
+                        "当前播放器轨道变更: {} - {} ({})",
+                        track_info.title,
+                        track_info.artist,
+                        player_name
+                    );
+                } else {
+                    log::debug!(
+                        "非当前播放器轨道变更: {} - {} ({})",
+                        track_info.title,
+                        track_info.artist,
+                        player_name
+                    );
+                }
             }
             PlayerEvent::PlaybackStatusChanged {
                 player_name,
@@ -199,6 +212,27 @@ impl TuiApp {
             PlayerEvent::PlayerAppeared { player_name } => {
                 if self.ui_state.current_player.is_none() {
                     self.ui_state.current_player = Some(player_name.clone());
+
+                    // 尝试获取轨道信息
+                    if let Some(track_info) = self.lyrics_manager.get_track_info(&player_name) {
+                        log::debug!(
+                            "播放器连接时获取到轨道信息: {} - {}",
+                            track_info.title,
+                            track_info.artist
+                        );
+                        self.ui_state.current_track = Some(track_info);
+                        self.ui_state.status_info.lyrics_source = Some("搜索中".to_string());
+                        self.ui_state.status_info.source_status = SourceStatus::Loading;
+
+                        // 尝试获取播放状态，但不设置默认状态，等待真实的PlaybackStatusChanged事件
+                        if let Some(status) = self.lyrics_manager.get_player_status(&player_name) {
+                            log::debug!("获取到播放器状态: {:?}", status);
+                            self.ui_state.playback_status = status;
+                        } else {
+                            log::debug!("未获取到播放器状态，等待PlaybackStatusChanged事件");
+                            // 不设置默认状态，保持当前状态或等待真实状态事件
+                        }
+                    }
                 }
                 log::info!("播放器连接: {}", player_name);
             }
@@ -214,9 +248,30 @@ impl TuiApp {
                 player_name,
                 status,
             } => {
-                self.ui_state.current_player = Some(player_name.clone());
                 log::info!("活跃播放器变更: {} (状态: {:?})", player_name, status);
+
+                // 更新当前播放器和状态
+                self.ui_state.current_player = Some(player_name.clone());
                 self.ui_state.playback_status = status;
+
+                // 尝试从歌词管理器获取当前播放器的轨道信息
+                if let Some(track_info) = self.lyrics_manager.get_track_info(&player_name) {
+                    log::debug!(
+                        "从歌词管理器获取到轨道信息: {} - {}",
+                        track_info.title,
+                        track_info.artist
+                    );
+                    self.ui_state.current_track = Some(track_info);
+                    self.ui_state.status_info.lyrics_source = Some("搜索中".to_string());
+                    self.ui_state.status_info.source_status = SourceStatus::Loading;
+                } else {
+                    log::debug!("歌词管理器中没有当前播放器的轨道信息，等待轨道变更事件");
+                    // 只有在没有轨道信息时才清空，避免显示"等待播放音乐"
+                    if self.ui_state.current_track.is_none() {
+                        self.ui_state.status_info.lyrics_source = Some("加载中".to_string());
+                        self.ui_state.status_info.source_status = SourceStatus::Loading;
+                    }
+                }
             }
             PlayerEvent::NoPlayersAvailable => {
                 self.ui_state.current_player = None;
@@ -259,5 +314,59 @@ impl TuiApp {
             .current_player
             .as_ref()
             .map_or(false, |current| current == player_name)
+    }
+
+    /// 切换到下一个播放器
+    async fn switch_to_next_player(&mut self) -> Result<()> {
+        let available_players = self.lyrics_manager.get_available_players();
+
+        if available_players.len() <= 1 {
+            log::info!("只有 {} 个播放器，无需切换", available_players.len());
+            return Ok(());
+        }
+
+        let current_player = self.ui_state.current_player.clone();
+        let next_player = if let Some(current) = current_player {
+            // 找到当前播放器在列表中的位置
+            if let Some(current_index) = available_players.iter().position(|p| p == &current) {
+                // 切换到下一个播放器（循环）
+                let next_index = (current_index + 1) % available_players.len();
+                available_players[next_index].clone()
+            } else {
+                // 当前播放器不在列表中，选择第一个
+                available_players[0].clone()
+            }
+        } else {
+            // 没有当前播放器，选择第一个
+            available_players[0].clone()
+        };
+
+        // 使用歌词管理器切换播放器
+        if self.lyrics_manager.set_current_player(next_player.clone()) {
+            log::info!("手动切换到播放器: {}", next_player);
+
+            // 立即更新UI状态，不等待ActivePlayerChanged事件
+            self.ui_state.current_player = Some(next_player.clone());
+
+            // 尝试获取轨道信息
+            if let Some(track_info) = self.lyrics_manager.get_track_info(&next_player) {
+                self.ui_state.current_track = Some(track_info);
+                self.ui_state.status_info.lyrics_source = Some("搜索中".to_string());
+                self.ui_state.status_info.source_status = SourceStatus::Loading;
+            }
+
+            // 获取播放状态，但不设置默认值
+            if let Some(status) = self.lyrics_manager.get_player_status(&next_player) {
+                log::debug!("切换时获取到播放状态: {:?}", status);
+                self.ui_state.playback_status = status;
+            } else {
+                log::debug!("切换时未获取到播放状态，保持当前状态");
+                // 保持当前播放状态，等待真实的PlaybackStatusChanged事件
+            }
+        } else {
+            log::warn!("切换到播放器 {} 失败", next_player);
+        }
+
+        Ok(())
     }
 }
