@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::display;
 use crate::lyrics;
 use crate::mpris;
+use crate::tui;
 
 pub struct App {
     config: Arc<Config>,
@@ -58,17 +59,31 @@ impl App {
             }
         });
 
-        // 启动显示管理器
-        debug!("启动显示管理器...");
-        let config_clone = Arc::clone(&self.config);
-        let display_handle = tokio::spawn(async move {
-            info!("开始显示歌词...");
-            if let Err(e) =
-                display::run_display_manager(config_clone, lyrics_manager, rx_display).await
-            {
-                error!("显示管理器运行失败: {}", e);
-            }
-        });
+        // 根据配置选择界面模式
+        let display_handle = if self.config.display.simple_output || !self.config.display.enable_tui {
+            // 简单输出模式：使用传统显示管理器
+            debug!("启动传统显示管理器（简单输出模式）...");
+            let config_clone = Arc::clone(&self.config);
+            tokio::spawn(async move {
+                info!("开始显示歌词（简单输出模式）...");
+                if let Err(e) =
+                    display::run_display_manager(config_clone, lyrics_manager, rx_display).await
+                {
+                    error!("显示管理器运行失败: {}", e);
+                }
+            })
+        } else {
+            // TUI 模式：使用新的 ratatui 界面
+            debug!("启动 TUI 界面...");
+            let config_clone = Arc::clone(&self.config);
+            tokio::spawn(async move {
+                info!("开始 TUI 界面...");
+                let mut tui_app = tui::TuiApp::new(config_clone, lyrics_manager);
+                if let Err(e) = tui_app.run(rx_display).await {
+                    error!("TUI 应用运行失败: {}", e);
+                }
+            })
+        };
 
         // 等待任务完成（通常不会主动完成，除非出错）
         debug!("所有组件已启动，等待运行...");
@@ -80,7 +95,7 @@ impl App {
             }
             result = display_handle => {
                 if let Err(e) = result {
-                    error!("显示管理器任务出错: {}", e);
+                    error!("界面管理器任务出错: {}", e);
                 }
             }
         }

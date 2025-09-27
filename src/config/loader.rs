@@ -42,6 +42,9 @@ pub struct DisplayConfig {
     /// 是否启用简单输出模式（适用于waybar等外部集成）
     pub simple_output: bool,
 
+    /// 是否启用 TUI 界面（默认启用，简单输出模式时自动禁用）
+    pub enable_tui: bool,
+
     /// 歌词提前显示时间（毫秒）
     pub lyric_advance_time: u64,
 }
@@ -98,6 +101,7 @@ impl Default for Config {
                 context_lines: 2,
                 current_line_color: "green".to_string(),
                 simple_output: false,
+                enable_tui: true,
                 lyric_advance_time: 300,
             },
             mpris: MprisSettings {

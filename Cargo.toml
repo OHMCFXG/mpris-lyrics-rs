@@ -31,7 +31,11 @@ thiserror = "1.0.44"
 log = "0.4.19"
 env_logger = "0.10.0"
 
-# 终端输出美化
+# TUI 界面
+ratatui = "0.24"
+crossterm = "0.27"
+
+# 终端输出美化（保留用于简单输出模式）
 colored = "2.0.4"
 
 # 时间处理
