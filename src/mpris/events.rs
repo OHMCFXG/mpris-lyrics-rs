@@ -29,6 +29,18 @@ pub fn compare_states_and_generate_events(
                     track_info: track_info.clone(),
                 });
             }
+
+            // 对于新出现的播放器，也要发送其播放状态（如果有）
+            if let Some(playback_status) = &current_state.playback_status {
+                debug!(
+                    "为新播放器发送播放状态: {} - {:?}",
+                    identity, playback_status
+                );
+                events_to_send.push(PlayerEvent::PlaybackStatusChanged {
+                    player_name: identity.clone(),
+                    status: playback_status.clone(),
+                });
+            }
         }
     }
 
