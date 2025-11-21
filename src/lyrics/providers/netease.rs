@@ -26,9 +26,9 @@ const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_1_0) AppleWe
 // get 16 length secret from base62
 fn get_secret() -> [u8; 16] {
     let mut key = [0; 16];
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for i in 0..16 {
-        let index = rng.gen_range(0..62);
+        let index = rng.random_range(0..62);
         key[i] = BASE62_CHARSET.as_bytes()[index];
     }
     key

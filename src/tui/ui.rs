@@ -40,7 +40,7 @@ pub fn render_ui(
     ui_state: &UiState,
     theme: &Theme,
 ) {
-    let size = f.size();
+    let size = f.area();
 
     // 创建主边框（标题在边框上）
     let main_title = if let Some(track) = &ui_state.current_track {
@@ -362,7 +362,7 @@ pub fn create_compact_layout(area: Rect) -> Vec<Rect> {
 
 /// 渲染帮助界面（覆盖显示）
 pub fn render_help(f: &mut Frame, theme: &Theme) {
-    let size = f.size();
+    let size = f.area();
 
     // 创建居中的帮助窗口
     let help_area = centered_rect(60, 70, size);
