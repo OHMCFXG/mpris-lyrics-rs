@@ -13,6 +13,7 @@ use crate::display::formatter;
 use crate::display::renderer;
 use crate::lyrics::LyricsManager;
 use crate::mpris::{PlaybackStatus, PlayerEvent, TrackInfo};
+use crate::player::PlayerManager;
 
 /// 显示管理器，负责在终端中显示歌词
 #[derive(Clone)]
@@ -21,6 +22,8 @@ pub struct DisplayManager {
     config: Arc<Config>,
     /// 歌词管理器
     lyrics_manager: LyricsManager,
+    /// 播放器管理器
+    player_manager: PlayerManager,
     /// 当前播放状态
     current_status: PlaybackStatus,
     /// 当前播放时间位置（毫秒）
@@ -37,10 +40,15 @@ pub struct DisplayManager {
 
 impl DisplayManager {
     /// 创建新的显示管理器
-    pub fn new(config: Arc<Config>, lyrics_manager: LyricsManager) -> Self {
+    pub fn new(
+        config: Arc<Config>,
+        lyrics_manager: LyricsManager,
+        player_manager: PlayerManager,
+    ) -> Self {
         Self {
             config,
             lyrics_manager,
+            player_manager,
             current_status: PlaybackStatus::Stopped,
             current_position: 0,
             current_track: None,
@@ -304,14 +312,14 @@ impl DisplayManager {
             }
         );
 
-        // 检查歌词管理器的当前播放器状态
-        if let Some(lyrics_player) = self.lyrics_manager.get_current_player() {
-            debug!("[Simple-output] 歌词管理器当前播放器: {}", lyrics_player);
-            if let Some(lyrics_status) = self.lyrics_manager.get_player_status(&lyrics_player) {
-                debug!("[Simple-output] 歌词管理器播放器状态: {:?}", lyrics_status);
+        // 检查播放器管理器的当前播放器状态
+        if let Some(player_name) = self.player_manager.get_current_player() {
+            debug!("[Simple-output] 播放器管理器当前播放器: {}", player_name);
+            if let Some(status) = self.player_manager.get_player_status(&player_name) {
+                debug!("[Simple-output] 播放器管理器播放器状态: {:?}", status);
             }
         } else {
-            debug!("[Simple-output] 歌词管理器无当前播放器");
+            debug!("[Simple-output] 播放器管理器无当前播放器");
         }
 
         // 确定显示什么内容
@@ -320,28 +328,28 @@ impl DisplayManager {
             debug!("[Simple-output] 输出：没有检测到媒体播放器");
             "没有检测到媒体播放器".to_string()
         } else {
-            // 检查歌词管理器是否有更合适的播放器
-            if let Some(lyrics_player) = self.lyrics_manager.get_current_player() {
-                if let Some(lyrics_status) = self.lyrics_manager.get_player_status(&lyrics_player) {
-                    if lyrics_status == PlaybackStatus::Playing {
-                        // 歌词管理器有正在播放的播放器，尝试获取其歌词
-                        debug!("[Simple-output] 使用歌词管理器的播放器: {}", lyrics_player);
+            // 检查播放器管理器是否有更合适的播放器
+            if let Some(player_name) = self.player_manager.get_current_player() {
+                if let Some(status) = self.player_manager.get_player_status(&player_name) {
+                    if status == PlaybackStatus::Playing {
+                        // 播放器管理器有正在播放的播放器，尝试获取其歌词
+                        debug!("[Simple-output] 使用播放器管理器的播放器: {}", player_name);
 
-                        // 如果显示管理器的当前播放器与歌词管理器不一致，需要同步
-                        if self.current_player.as_ref() != Some(&lyrics_player) {
+                        // 如果显示管理器的当前播放器与播放器管理器不一致，需要同步
+                        if self.current_player.as_ref() != Some(&player_name) {
                             debug!(
                                 "[Simple-output] 同步播放器信息: {} -> {}",
                                 self.current_player.as_ref().unwrap_or(&"None".to_string()),
-                                lyrics_player
+                                player_name
                             );
 
                             // 同步播放器信息
-                            self.current_player = Some(lyrics_player.clone());
-                            self.current_status = lyrics_status;
+                            self.current_player = Some(player_name.clone());
+                            self.current_status = status;
 
                             // 获取轨道信息
                             if let Some(track_info) =
-                                self.lyrics_manager.get_track_info(&lyrics_player)
+                                self.lyrics_manager.get_track_info(&player_name)
                             {
                                 self.current_track = Some(track_info);
                                 debug!("[Simple-output] 已同步轨道信息");
@@ -392,8 +400,8 @@ impl DisplayManager {
                     "没有正在播放的歌曲".to_string()
                 }
             } else {
-                // 歌词管理器没有当前播放器
-                debug!("[Simple-output] 歌词管理器没有当前播放器");
+                // 播放器管理器没有当前播放器
+                debug!("[Simple-output] 播放器管理器没有当前播放器");
                 "没有正在播放的歌曲".to_string()
             }
         };
@@ -587,8 +595,9 @@ impl DisplayManager {
 pub async fn run_display_manager(
     config: Arc<Config>,
     lyrics_manager: LyricsManager,
+    player_manager: PlayerManager,
     player_events: Receiver<PlayerEvent>,
 ) -> Result<()> {
-    let mut display_manager = DisplayManager::new(config, lyrics_manager);
+    let mut display_manager = DisplayManager::new(config, lyrics_manager, player_manager);
     display_manager.run(player_events).await
 }

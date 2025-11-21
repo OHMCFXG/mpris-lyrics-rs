@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 use crate::config::Config;
 use crate::lyrics::LyricsManager;
 use crate::mpris::{PlaybackStatus, PlayerEvent};
+use crate::player::PlayerManager;
 use crate::tui::events::{EventHandler, TuiEvent};
 use crate::tui::theme::Theme;
 use crate::tui::ui::{render_help, render_ui, UiState};
@@ -21,6 +22,7 @@ use crate::tui::widgets::SourceStatus;
 pub struct TuiApp {
     config: Arc<Config>,
     lyrics_manager: LyricsManager,
+    player_manager: PlayerManager,
     theme: Theme,
     ui_state: UiState,
     should_quit: bool,
@@ -30,12 +32,17 @@ pub struct TuiApp {
 
 impl TuiApp {
     /// 创建新的 TUI 应用
-    pub fn new(config: Arc<Config>, lyrics_manager: LyricsManager) -> Self {
+    pub fn new(
+        config: Arc<Config>,
+        lyrics_manager: LyricsManager,
+        player_manager: PlayerManager,
+    ) -> Self {
         let theme = Theme::default(); // 使用终端原生配色
 
         Self {
             config,
             lyrics_manager,
+            player_manager,
             theme,
             ui_state: UiState::default(),
             should_quit: false,
@@ -225,7 +232,7 @@ impl TuiApp {
                         self.ui_state.status_info.source_status = SourceStatus::Loading;
 
                         // 尝试获取播放状态，但不设置默认状态，等待真实的PlaybackStatusChanged事件
-                        if let Some(status) = self.lyrics_manager.get_player_status(&player_name) {
+                        if let Some(status) = self.player_manager.get_player_status(&player_name) {
                             log::debug!("获取到播放器状态: {:?}", status);
                             self.ui_state.playback_status = status;
                         } else {
@@ -318,7 +325,7 @@ impl TuiApp {
 
     /// 切换到下一个播放器
     async fn switch_to_next_player(&mut self) -> Result<()> {
-        let available_players = self.lyrics_manager.get_available_players();
+        let available_players = self.player_manager.get_available_players();
 
         if available_players.len() <= 1 {
             log::info!("只有 {} 个播放器，无需切换", available_players.len());
@@ -341,8 +348,8 @@ impl TuiApp {
             available_players[0].clone()
         };
 
-        // 使用歌词管理器切换播放器
-        if self.lyrics_manager.set_current_player(next_player.clone()) {
+        // 使用播放器管理器切换播放器
+        if self.player_manager.set_current_player(next_player.clone()) {
             log::info!("手动切换到播放器: {}", next_player);
 
             // 立即更新UI状态，不等待ActivePlayerChanged事件
@@ -356,7 +363,7 @@ impl TuiApp {
             }
 
             // 获取播放状态，但不设置默认值
-            if let Some(status) = self.lyrics_manager.get_player_status(&next_player) {
+            if let Some(status) = self.player_manager.get_player_status(&next_player) {
                 log::debug!("切换时获取到播放状态: {:?}", status);
                 self.ui_state.playback_status = status;
             } else {
