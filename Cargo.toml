@@ -11,7 +11,12 @@ mpris = "2.0.1"
 dbus = "0.9.9"
 
 # 异步运行时
-tokio = { version = "1.48.0", features = ["full"] }
+tokio = { version = "1.48.0", features = [
+    "rt-multi-thread",
+    "sync",
+    "time",
+    "macros",
+] }
 
 # 网络请求
 reqwest = { version = "0.12.24", features = ["json"] }
@@ -58,5 +63,6 @@ async-trait = "0.1.89"
 [profile.release]
 opt-level = 3
 strip = true
-lto = "thin"
+lto = true
 codegen-units = 1
+panic = "abort"
