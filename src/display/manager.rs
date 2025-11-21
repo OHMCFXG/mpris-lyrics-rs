@@ -36,6 +36,8 @@ pub struct DisplayManager {
     last_update: u64,
     /// 上次输出的内容（用于避免简单模式下重复输出）
     last_output: String,
+    /// 上次显示的歌词行文本（用于智能刷新，仅在变化时重绘）
+    last_displayed_line: Option<String>,
 }
 
 impl DisplayManager {
@@ -55,6 +57,7 @@ impl DisplayManager {
             current_player: None,
             last_update: 0,
             last_output: String::new(),
+            last_displayed_line: None,
         }
     }
 
@@ -131,6 +134,8 @@ impl DisplayManager {
                     // 在轨道变更时重置播放位置，避免显示旧歌词
                     self.current_position = 0;
                     self.last_update = 0;
+                    // 重置歌词行缓存，强制刷新
+                    self.last_displayed_line = None;
 
                     // 刷新显示
                     self.refresh_display()?;
@@ -165,6 +170,8 @@ impl DisplayManager {
                     self.current_position = 0;
                     self.current_status = PlaybackStatus::Stopped;
                     self.last_update = 0;
+                    // 重置歌词行缓存
+                    self.last_displayed_line = None;
                     self.refresh_display()?;
                 }
             }
@@ -208,6 +215,8 @@ impl DisplayManager {
                     // 重置播放位置和更新时间
                     self.current_position = 0;
                     self.last_update = 0;
+                    // 重置歌词行缓存，强制刷新
+                    self.last_displayed_line = None;
 
                     // 直接使用事件传递过来的状态
                     self.current_status = status;
@@ -243,6 +252,8 @@ impl DisplayManager {
                 self.current_position = 0;
                 self.current_status = PlaybackStatus::Stopped;
                 self.last_update = 0;
+                // 重置歌词行缓存
+                self.last_displayed_line = None;
 
                 // 刷新显示以显示无播放器提示
                 self.refresh_display()?;
@@ -264,6 +275,22 @@ impl DisplayManager {
         if !self.config.display.show_progress {
             return Ok(());
         }
+
+        // 智能刷新：检查当前歌词行是否变化
+        let lyric_advance_time = self.config.display.lyric_advance_time;
+        let position_with_advance = self.current_position + lyric_advance_time;
+        
+        let current_line_text = self.lyrics_manager
+            .get_lyric_at_time(position_with_advance)
+            .map(|line| line.text.clone());
+        
+        // 如果歌词行未变化且播放状态未变化，跳过刷新
+        if current_line_text == self.last_displayed_line && self.current_status == PlaybackStatus::Playing {
+            return Ok(());
+        }
+        
+        // 更新缓存的歌词行
+        self.last_displayed_line = current_line_text;
 
         // 清屏
         print!("\x1B[2J\x1B[1;1H");
@@ -488,53 +515,25 @@ impl DisplayManager {
             self.current_position, position_with_advance
         );
 
-        // 2. 寻找当前行 - 修改查找逻辑
-        let mut current_index = 0;
-        let mut found_exact_match = false;
-
-        // 首先尝试找到一个精确匹配的行（当前时间在其开始和结束时间之间）
-        for (i, line) in lyrics.lines.iter().enumerate() {
-            // 如果当前时间在这一行的时间范围内
-            if line.start_time <= position_with_advance
-                && (line.end_time.is_none() || position_with_advance < line.end_time.unwrap())
-            {
-                current_index = i;
-                found_exact_match = true;
-                debug!(
-                    "找到匹配行 #{}: 开始={}, 结束={:?}, 文本={}",
-                    i, line.start_time, line.end_time, line.text
-                );
-                break;
-            }
+        // 2. 使用 LyricsManager 的二分查找获取当前行（O(log n) 性能优化）
+        let current_line = self.lyrics_manager.get_lyric_at_time(position_with_advance);
+        
+        if current_line.is_none() {
+            println!("无法定位当前歌词行");
+            return Ok(());
         }
-
-        // 如果没有找到精确匹配，使用最接近的行
-        if !found_exact_match {
-            if position_with_advance < lyrics.lines[0].start_time {
-                // 如果当前时间在第一行开始前，使用第一行
-                current_index = 0;
-                debug!(
-                    "当前时间在第一行开始前，使用第一行: 开始={}, 文本={}",
-                    lyrics.lines[0].start_time, lyrics.lines[0].text
-                );
-            } else {
-                // 找到最后一个开始时间不大于当前时间的行
-                for (i, line) in lyrics.lines.iter().enumerate() {
-                    if line.start_time <= position_with_advance {
-                        current_index = i;
-                    } else {
-                        break;
-                    }
-                }
-                debug!(
-                    "使用最近的行 #{}: 开始={}, 结束={:?}, 文本={}",
-                    current_index,
-                    lyrics.lines[current_index].start_time,
-                    lyrics.lines[current_index].end_time,
-                    lyrics.lines[current_index].text
-                );
-            }
-        }
+        
+        let current_line = current_line.unwrap();
+        
+        // 找到当前行在歌词列表中的索引（用于显示上下文）
+        let current_index = lyrics.lines.iter()
+            .position(|line| line.start_time == current_line.start_time && line.text == current_line.text)
+            .unwrap_or(0);
+        
+        debug!(
+            "当前歌词行 #{}: 开始={}, 文本={}",
+            current_index, current_line.start_time, current_line.text
+        );
 
         // 3. 显示上下文行
         let context_lines = self.config.display.context_lines;

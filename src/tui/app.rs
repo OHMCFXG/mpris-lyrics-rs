@@ -302,14 +302,27 @@ impl TuiApp {
     fn update_lyrics_status(&mut self) {
         let lyrics = self.lyrics_manager.get_current_lyrics();
 
-        if lyrics.is_some() {
+        if let Some(lyrics) = lyrics {
+            // 有歌词，显示成功状态和实际来源
             self.ui_state.status_info.source_status = SourceStatus::Success;
-            // 获取歌词来源
-            // TODO: 从歌词管理器获取实际来源信息
-            self.ui_state.status_info.lyrics_source = Some("网易云".to_string());
+            self.ui_state.status_info.lyrics_source = Some(lyrics.metadata.source.clone());
         } else if self.ui_state.current_track.is_some() {
-            self.ui_state.status_info.source_status = SourceStatus::Loading;
+            // 有轨道但没有歌词，判断是搜索中还是未找到
+            let is_loading = match &self.ui_state.status_info.lyrics_source {
+                None => true,
+                Some(s) => s == "搜索中",
+            };
+            
+            if is_loading {
+                // 初始状态，保持 Loading
+                self.ui_state.status_info.source_status = SourceStatus::Loading;
+            } else {
+                // 已经设置过来源但没有歌词，说明搜索失败
+                self.ui_state.status_info.source_status = SourceStatus::Failed;
+                self.ui_state.status_info.lyrics_source = Some("未找到歌词".to_string());
+            }
         } else {
+            // 没有轨道，清除状态
             self.ui_state.status_info.source_status = SourceStatus::None;
             self.ui_state.status_info.lyrics_source = None;
         }

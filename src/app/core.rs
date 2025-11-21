@@ -91,13 +91,20 @@ impl App {
         } else {
             // TUI 模式：使用新的 ratatui 界面（手动切换模式）
             debug!("启动 TUI 界面...");
+            
+            // TUI模式下，彻底禁用日志输出到终端，避免破坏界面
+            // 注意：这会禁用所有日志输出，包括Error级别
+            log::set_max_level(log::LevelFilter::Off);
+            
             player_manager.set_manual_mode(true); // TUI模式使用手动切换
             let config_clone = Arc::clone(&self.config);
             tokio::spawn(async move {
-                info!("开始 TUI 界面...");
+                // 注意：由于日志已禁用，这条日志不会输出
                 let mut tui_app = tui::TuiApp::new(config_clone, lyrics_manager, player_manager);
                 if let Err(e) = tui_app.run(rx_display).await {
-                    error!("TUI 应用运行失败: {}", e);
+                    // 即使出错，这条error日志也不会显示（因为已禁用）
+                    // 错误会通过 Result 传递到外层处理
+                    eprintln!("TUI 应用运行失败: {}", e);
                 }
             })
         };
