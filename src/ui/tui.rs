@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use crossterm::{
     event::{self, Event as CEvent, KeyCode, KeyEvent},
+    cursor::Show,
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -39,6 +40,7 @@ impl TuiApp {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen)?;
+        let _terminal_guard = TerminalGuard;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
@@ -97,9 +99,6 @@ impl TuiApp {
         }
 
         let _ = input_task.await;
-        disable_raw_mode()?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-        terminal.show_cursor()?;
         Ok(())
     }
 }
@@ -407,4 +406,14 @@ fn should_tick(state: &GlobalState) -> bool {
     let Some(active) = &state.active_player else { return false; };
     let Some(player_state) = state.players.get(active) else { return false; };
     player_state.playback_status == crate::state::PlaybackStatus::Playing
+}
+
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, LeaveAlternateScreen, Show);
+    }
 }
