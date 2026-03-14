@@ -15,7 +15,7 @@ use ratatui::{
     style::{Color, Style},
     prelude::Stylize,
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, Paragraph},
+    widgets::{Block, Borders, Paragraph},
     Terminal,
 };
 use tokio::sync::broadcast;
