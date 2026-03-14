@@ -23,7 +23,7 @@ use tokio::sync::broadcast;
 use crate::config::Config;
 use crate::events::{Event, EventHub, UiCommand};
 use crate::lyrics::Lyrics;
-use crate::state::{GlobalState, LyricsStatus, StateStore};
+use crate::state::{GlobalState, LyricsStatus, PlayerState, StateStore};
 
 pub struct TuiApp {
     config: Arc<Config>,
@@ -157,10 +157,7 @@ fn render_header(state: &GlobalState) -> Paragraph<'static> {
         .as_deref()
         .map(format_player_name)
         .unwrap_or_else(|| "no player".to_string());
-    let title = state
-        .active_player
-        .as_ref()
-        .and_then(|p| state.players.get(p))
+    let title = active_player_state(state)
         .and_then(|p| p.track.as_ref())
         .map(|t| {
             if t.artist.is_empty() {
@@ -170,10 +167,7 @@ fn render_header(state: &GlobalState) -> Paragraph<'static> {
             }
         })
         .unwrap_or_else(|| "no track".to_string());
-    let (status_label, status_color) = state
-        .active_player
-        .as_ref()
-        .and_then(|p| state.players.get(p))
+    let (status_label, status_color) = active_player_state(state)
         .map(|p| match p.playback_status {
             crate::state::PlaybackStatus::Playing => ("Playing", Color::Green),
             crate::state::PlaybackStatus::Paused => ("Paused", Color::Yellow),
@@ -214,60 +208,12 @@ fn render_header(state: &GlobalState) -> Paragraph<'static> {
 }
 
 fn render_body(config: &Config, state: &GlobalState, height: usize) -> Paragraph<'static> {
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    match &state.lyrics.status {
-        LyricsStatus::Ready => {
-            if let Some(lyrics) = &state.lyrics.lyrics {
-                let position_ms = active_position_ms(state);
-                let position_with_advance = position_ms + config.display.lyric_advance_time_ms;
-                let (current_index, _) = find_line_index(lyrics, position_with_advance);
-                let context = config.display.context_lines.max(2);
-                let start = current_index.saturating_sub(context);
-                let end = (current_index + context + 1).min(lyrics.lines.len());
-                let mut content: Vec<Line<'static>> = Vec::new();
-                for idx in start..end {
-                    let line = &lyrics.lines[idx];
-                    let text = if config.display.show_timestamp {
-                        format!("[{}] {}", format_time(line.start_time_ms), line.text)
-                    } else {
-                        line.text.clone()
-                    };
-                    let distance = if idx > current_index {
-                        idx - current_index
-                    } else {
-                        current_index - idx
-                    };
-                    let (prefix, style) = lyric_line_style(
-                        distance,
-                        context,
-                        parse_color(&config.display.current_line_color),
-                    );
-                    content.push(Line::from(vec![
-                        Span::styled(prefix, style),
-                        Span::styled(text, style),
-                    ]));
-                    if distance == 0 {
-                        content.insert(content.len() - 1, Line::from(""));
-                        content.push(Line::from(""));
-                    }
-                }
-                let total = content.len();
-                let pad = height.saturating_sub(total) / 2;
-                for _ in 0..pad {
-                    lines.push(Line::from(""));
-                }
-                lines.extend(content);
-            } else {
-                lines.push(Line::from(Span::styled(
-                    "No lyrics",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-        }
-        LyricsStatus::Loading => lines.push(Line::from("Searching lyrics...")),
-        LyricsStatus::Failed(_) => lines.push(Line::from("Lyrics failed")),
-        LyricsStatus::Idle => lines.push(Line::from("Lyrics idle")),
-    }
+    let lines = match &state.lyrics.status {
+        LyricsStatus::Ready => render_lyrics_lines(config, state, height),
+        LyricsStatus::Loading => vec![Line::from("Searching lyrics...")],
+        LyricsStatus::Failed(_) => vec![Line::from("Lyrics failed")],
+        LyricsStatus::Idle => vec![Line::from("Lyrics idle")],
+    };
 
     Paragraph::new(lines)
         .alignment(ratatui::layout::Alignment::Center)
@@ -275,9 +221,9 @@ fn render_body(config: &Config, state: &GlobalState, height: usize) -> Paragraph
 }
 
 fn active_position_ms(state: &GlobalState) -> u64 {
-    let Some(player) = &state.active_player else { return 0; };
-    let Some(player_state) = state.players.get(player) else { return 0; };
-    player_state.estimate_position_ms()
+    active_player_state(state)
+        .map(|p| p.estimate_position_ms())
+        .unwrap_or(0)
 }
 
 fn find_line_index(lyrics: &Lyrics, time_ms: u64) -> (usize, Option<&crate::lyrics::LyricLine>) {
@@ -292,28 +238,22 @@ fn find_line_index(lyrics: &Lyrics, time_ms: u64) -> (usize, Option<&crate::lyri
 }
 
 fn render_progress(state: &GlobalState) -> Paragraph<'static> {
-    let (pos_ms, total_ms) = match state.active_player.as_ref() {
-        Some(player) => state
-            .players
-            .get(player)
-            .and_then(|p| p.track.as_ref().map(|t| (p.estimate_position_ms(), t.length_ms)))
-            .unwrap_or((0, 0)),
-        None => (0, 0),
-    };
+    let (pos_ms, total_ms) = active_player_state(state)
+        .and_then(|p| p.track.as_ref().map(|t| (p.estimate_position_ms(), t.length_ms)))
+        .unwrap_or((0, 0));
 
     let ratio = if total_ms > 0 {
         (pos_ms as f64 / total_ms as f64).min(1.0)
     } else {
         0.0
     };
-    let bar_len = 30usize;
-    let marker = if bar_len == 0 {
+    let marker = if PROGRESS_BAR_LEN == 0 {
         0
     } else {
-        (ratio * (bar_len as f64 - 1.0)).round() as usize
+        (ratio * (PROGRESS_BAR_LEN as f64 - 1.0)).round() as usize
     };
-    let mut bar = String::new();
-    for idx in 0..bar_len {
+    let mut bar = String::with_capacity(PROGRESS_BAR_LEN);
+    for idx in 0..PROGRESS_BAR_LEN {
         if idx == marker {
             bar.push('▮');
         } else {
@@ -358,27 +298,90 @@ fn format_time(ms: u64) -> String {
     format!("{:02}:{:02}", minutes, seconds)
 }
 
-fn lyric_line_style(distance: usize, context: usize, highlight: Color) -> (&'static str, Style) {
-    if distance == 0 {
-        return (
-            "> ",
-            Style::default().fg(highlight).bold(),
-        );
+fn render_lyrics_lines(config: &Config, state: &GlobalState, height: usize) -> Vec<Line<'static>> {
+    let Some(lyrics) = &state.lyrics.lyrics else {
+        return vec![Line::from(Span::styled(
+            "No lyrics",
+            Style::default().fg(Color::DarkGray),
+        ))];
+    };
+
+    let highlight = parse_color(&config.display.current_line_color);
+    let highlight_style = Style::default().fg(highlight).bold();
+    let context = config.display.context_lines.max(2);
+    let gradient = build_lyric_gradient(context);
+
+    let position_ms = active_position_ms(state);
+    let position_with_advance = position_ms + config.display.lyric_advance_time_ms;
+    let (current_index, _) = find_line_index(lyrics, position_with_advance);
+    let start = current_index.saturating_sub(context);
+    let end = (current_index + context + 1).min(lyrics.lines.len());
+
+    let mut content: Vec<Line<'static>> = Vec::new();
+    for idx in start..end {
+        let line = &lyrics.lines[idx];
+        let text = if config.display.show_timestamp {
+            format!("[{}] {}", format_time(line.start_time_ms), line.text)
+        } else {
+            line.text.clone()
+        };
+        let distance = if idx > current_index {
+            idx - current_index
+        } else {
+            current_index - idx
+        };
+
+        if distance == 0 {
+            content.push(Line::from(""));
+        }
+
+        let (prefix, style) = if distance == 0 {
+            ("> ", highlight_style)
+        } else {
+            let style = gradient[(distance.min(context)) - 1];
+            ("  ", style)
+        };
+        content.push(Line::from(vec![
+            Span::styled(prefix, style),
+            Span::styled(text, style),
+        ]));
+
+        if distance == 0 {
+            content.push(Line::from(""));
+        }
     }
 
+    let total = content.len();
+    let pad = height.saturating_sub(total) / 2;
+    let mut lines = Vec::with_capacity(pad + total);
+    for _ in 0..pad {
+        lines.push(Line::from(""));
+    }
+    lines.extend(content);
+    lines
+}
+
+fn build_lyric_gradient(context: usize) -> Vec<Style> {
     let steps = context.max(1);
-    let clamped = distance.min(steps);
+    let mut styles = Vec::with_capacity(steps);
+    for distance in 1..=steps {
+        let val = gradient_gray(distance, steps);
+        let mut style = Style::default().fg(Color::Rgb(val, val, val));
+        if distance >= 2 {
+            style = style.add_modifier(Modifier::DIM);
+        }
+        styles.push(style);
+    }
+    styles
+}
+
+fn gradient_gray(distance: usize, steps: usize) -> u8 {
     let max: i32 = 180;
     let min: i32 = 70;
     let range = max - min;
-    let val = max - (range * clamped as i32) / steps as i32;
-    let val = val.clamp(min, max) as u8;
-
-    let mut style = Style::default().fg(Color::Rgb(val, val, val));
-    if distance >= 2 {
-        style = style.add_modifier(Modifier::DIM);
-    }
-    ("  ", style)
+    let clamped = distance.min(steps) as i32;
+    let val = max - (range * clamped) / steps as i32;
+    val.clamp(min, max) as u8
 }
 
 fn format_player_name(player: &str) -> String {
@@ -425,6 +428,15 @@ fn should_tick(state: &GlobalState) -> bool {
     let Some(player_state) = state.players.get(active) else { return false; };
     player_state.playback_status == crate::state::PlaybackStatus::Playing
 }
+
+fn active_player_state(state: &GlobalState) -> Option<&PlayerState> {
+    state
+        .active_player
+        .as_ref()
+        .and_then(|player| state.players.get(player))
+}
+
+const PROGRESS_BAR_LEN: usize = 30;
 
 struct TerminalGuard;
 
