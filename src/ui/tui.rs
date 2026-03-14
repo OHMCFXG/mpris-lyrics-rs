@@ -246,9 +246,11 @@ fn render_body(config: &Config, state: &GlobalState, height: usize) -> Paragraph
                                 .bold(),
                         )
                     } else if distance == 1 {
-                        ("  ", Style::default().fg(Color::Gray))
-                    } else {
                         ("  ", Style::default().fg(Color::DarkGray))
+                    } else if distance == 2 {
+                        ("  ", Style::default().fg(Color::Rgb(80, 80, 80)))
+                    } else {
+                        ("  ", Style::default().fg(Color::Rgb(60, 60, 60)))
                     };
                     content.push(Line::from(vec![
                         Span::styled(prefix, style),
