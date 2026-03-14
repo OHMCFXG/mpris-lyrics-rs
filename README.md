@@ -5,9 +5,9 @@ A lyrics display program for Linux that synchronizes with music players via MPRI
 ## Features
 
 - Displays synchronized lyrics for currently playing music
-- Supports multiple music players through MPRIS protocol
-- Multiple lyrics sources supported (NetEase Music, QQ Music, local files)
-- Terminal-based interface with progress bar
+- Supports multiple music players through MPRIS
+- Multiple lyrics sources supported (NetEase Music, QQ Music)
+- TUI with centered lyrics, status header, and progress bar
 - Simple output mode for integration with external programs (e.g., waybar)
 
 ## Installation
@@ -19,7 +19,7 @@ A lyrics display program for Linux that synchronizes with music players via MPRI
 ### Building from source
 
 ```bash
-git clone https://github.com/yourusername/mpris-lyrics-rs.git
+git clone https://github.com/OHMCFXG/mpris-lyrics-rs.git
 cd mpris-lyrics-rs
 cargo build --release
 ```
@@ -56,10 +56,17 @@ You can place your configuration file in one of these locations:
 Example configuration:
 
 ```toml
-# Example configuration - refer to documentation for all options
 [display]
+show_timestamp = false
 show_progress = true
+context_lines = 2
+current_line_color = "green"
 simple_output = false
+enable_tui = true
+lyric_advance_time_ms = 300
+
+[mpris]
+fallback_sync_interval_seconds = 5
 
 [sources.netease]
 # NetEase Music configuration
@@ -67,8 +74,8 @@ simple_output = false
 [sources.qqmusic]
 # QQ Music configuration
 
-[sources.local]
-lyrics_path = "~/Music/Lyrics"
+[players]
+blacklist = ["firefox", "mozilla", "chromium", "chrome", "kdeconnect"]
 ```
 
 ## License
