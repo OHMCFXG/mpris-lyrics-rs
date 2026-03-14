@@ -156,7 +156,8 @@ fn render_header(state: &GlobalState) -> Paragraph<'static> {
     let player = state
         .active_player
         .as_deref()
-        .unwrap_or("no player");
+        .map(format_player_name)
+        .unwrap_or_else(|| "no player".to_string());
     let title = state
         .active_player
         .as_ref()
@@ -188,7 +189,7 @@ fn render_header(state: &GlobalState) -> Paragraph<'static> {
 
     let line = Line::from(vec![
         Span::styled("Player: ", Style::default().bold()),
-        Span::raw(player.to_string()),
+        Span::raw(player),
         Span::raw(" | "),
         Span::styled("Track: ", Style::default().bold()),
         Span::raw(title),
@@ -306,12 +307,13 @@ fn render_progress(state: &GlobalState) -> Gauge<'static> {
 
 fn render_help() -> Paragraph<'static> {
     let line = Line::from(vec![
-        Span::styled("q/Esc ", Style::default().bold()),
-        Span::raw("quit  "),
+        Span::styled("Q / Esc ", Style::default().bold()),
+        Span::raw("Quit  "),
         Span::styled("Tab ", Style::default().bold()),
-        Span::raw("next player"),
+        Span::raw("Next Player"),
     ]);
     Paragraph::new(vec![line])
+        .alignment(ratatui::layout::Alignment::Center)
         .block(Block::default().borders(Borders::ALL).title("Help"))
 }
 
@@ -320,6 +322,32 @@ fn format_time(ms: u64) -> String {
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
     format!("{:02}:{:02}", minutes, seconds)
+}
+
+fn format_player_name(player: &str) -> String {
+    let mut name = player;
+    const PREFIX: &str = "org.mpris.MediaPlayer2.";
+    if let Some(stripped) = name.strip_prefix(PREFIX) {
+        name = stripped;
+    }
+    if let Some((base, _)) = name.split_once(".instance") {
+        name = base;
+    }
+    let name = name.trim_matches('.');
+    if name.is_empty() {
+        return player.to_string();
+    }
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return player.to_string();
+    };
+    if first.is_ascii_lowercase() {
+        let mut out = String::new();
+        out.push(first.to_ascii_uppercase());
+        out.push_str(chars.as_str());
+        return out;
+    }
+    name.to_string()
 }
 
 fn parse_color(name: &str) -> Color {
