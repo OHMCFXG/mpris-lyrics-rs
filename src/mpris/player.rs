@@ -201,16 +201,7 @@ fn parse_metadata(value: &OwnedValue) -> Option<TrackInfo> {
         .unwrap_or("")
         .to_string();
 
-    let length_us = dict
-        .get::<_, i64>(&"mpris:length")
-        .ok()
-        .flatten()
-        .unwrap_or(0);
-    let length_ms = if length_us > 0 {
-        (length_us as u64) / 1000
-    } else {
-        0
-    };
+    let length_ms = parse_length_ms(dict);
 
     let track_id = dict
         .get::<_, ObjectPath<'_>>(&"mpris:trackid")
@@ -225,6 +216,40 @@ fn parse_metadata(value: &OwnedValue) -> Option<TrackInfo> {
         length_ms,
         track_id,
     })
+}
+
+fn parse_length_ms(dict: &Dict<'_, '_>) -> u64 {
+    if let Some(ms) = parse_length_key(dict, "mpris:length") {
+        return ms;
+    }
+    if let Some(ms) = parse_length_key(dict, "xesam:length") {
+        return ms;
+    }
+    0
+}
+
+fn parse_length_key(dict: &Dict<'_, '_>, key: &str) -> Option<u64> {
+    if let Ok(Some(value)) = dict.get::<_, i64>(&key) {
+        if value > 0 {
+            return Some((value as u64) / 1000);
+        }
+    }
+    if let Ok(Some(value)) = dict.get::<_, u64>(&key) {
+        if value > 0 {
+            return Some(value / 1000);
+        }
+    }
+    if let Ok(Some(value)) = dict.get::<_, i32>(&key) {
+        if value > 0 {
+            return Some((value as u64) / 1000);
+        }
+    }
+    if let Ok(Some(value)) = dict.get::<_, u32>(&key) {
+        if value > 0 {
+            return Some((value as u64) / 1000);
+        }
+    }
+    None
 }
 
 fn parse_artists(dict: &Dict<'_, '_>) -> String {

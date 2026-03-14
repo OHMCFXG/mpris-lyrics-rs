@@ -279,15 +279,17 @@ fn render_progress(state: &GlobalState) -> Gauge<'static> {
         0.0
     };
 
+    let label = format!(
+        "{} / {}",
+        format_time(pos_ms),
+        if total_ms > 0 { format_time(total_ms) } else { "--:--".to_string() }
+    );
+
     Gauge::default()
         .block(Block::default().borders(Borders::ALL).title("Progress"))
-        .gauge_style(Style::default().fg(Color::Green))
+        .gauge_style(Style::default().fg(Color::Green).bg(Color::Black))
         .ratio(ratio)
-        .label(format!(
-            "{} / {}",
-            format_time(pos_ms),
-            if total_ms > 0 { format_time(total_ms) } else { "--:--".to_string() }
-        ))
+        .label(Span::styled(label, Style::default().fg(Color::Black).bg(Color::White)))
 }
 
 fn render_help() -> Paragraph<'static> {
