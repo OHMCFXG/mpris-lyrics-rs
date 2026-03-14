@@ -41,10 +41,15 @@ pub fn parse_lrc_text(lrc_text: &str, track: &TrackInfo, source: &str) -> Result
     let mut lines: Vec<LyricLine> = parsed
         .get_timed_lines()
         .iter()
-        .map(|(tag, text)| LyricLine {
-            start_time_ms: tag.get_timestamp().max(0) as u64,
-            end_time_ms: None,
-            text: text.to_string(),
+        .filter_map(|(tag, text)| {
+            if text.trim().is_empty() {
+                return None;
+            }
+            Some(LyricLine {
+                start_time_ms: tag.get_timestamp().max(0) as u64,
+                end_time_ms: None,
+                text: text.to_string(),
+            })
         })
         .collect();
 
