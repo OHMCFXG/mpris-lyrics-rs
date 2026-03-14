@@ -184,6 +184,30 @@ impl LyricsService {
             track.title,
             track.artist
         );
+
+        let state = self.store.snapshot().await;
+        if state.lyrics.track_key.as_ref() == Some(&track_key) {
+            match state.lyrics.status {
+                crate::state::LyricsStatus::Ready | crate::state::LyricsStatus::Loading => {
+                    tracing::debug!("lyrics: skip fetch, already ready/loading");
+                    return;
+                }
+                crate::state::LyricsStatus::Failed(_) => {
+                    if state.lyrics.fail_count >= 2 {
+                        tracing::debug!("lyrics: skip fetch, fail_count >= 2");
+                        return;
+                    }
+                    if let Some(last_failed_at) = state.lyrics.last_failed_at {
+                        if last_failed_at.elapsed() < std::time::Duration::from_secs(30) {
+                            tracing::debug!("lyrics: skip fetch, backoff active");
+                            return;
+                        }
+                    }
+                }
+                crate::state::LyricsStatus::Idle => {}
+            }
+        }
+
         {
             let mut pending = self.pending.lock().await;
             if pending.contains(&track_key) {
@@ -191,26 +215,6 @@ impl LyricsService {
                 return;
             }
             pending.insert(track_key.clone());
-        }
-
-        let state = self.store.snapshot().await;
-        if state.lyrics.track_key.as_ref() == Some(&track_key) {
-            if let crate::state::LyricsStatus::Failed(_) = state.lyrics.status {
-                if state.lyrics.fail_count >= 2 {
-                    tracing::debug!("lyrics: skip fetch, fail_count >= 2");
-                    let mut pending = self.pending.lock().await;
-                    pending.remove(&track_key);
-                    return;
-                }
-                if let Some(last_failed_at) = state.lyrics.last_failed_at {
-                    if last_failed_at.elapsed() < std::time::Duration::from_secs(30) {
-                        tracing::debug!("lyrics: skip fetch, backoff active");
-                        let mut pending = self.pending.lock().await;
-                        pending.remove(&track_key);
-                        return;
-                    }
-                }
-            }
         }
 
         self.hub.emit(Event::LyricsRequested { track_key: track_key.clone() });
