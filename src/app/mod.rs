@@ -25,7 +25,6 @@ impl App {
         let store = Arc::new(StateStore::new());
 
         spawn_state_loop(store.clone(), hub.clone());
-        mpris::spawn(self.config.clone(), hub.clone()).await?;
 
         let providers = providers::get_enabled_providers(&self.config);
         let lyrics_service = LyricsService::new(providers, hub.clone(), store.clone());
@@ -50,6 +49,9 @@ impl App {
                 }
             });
         }
+
+        // Start MPRIS last so initial events are not missed by lyrics/UI tasks.
+        mpris::spawn(self.config.clone(), hub.clone()).await?;
 
         if self.config.display.simple_output {
             tracing::debug!("app started; simple output mode");
