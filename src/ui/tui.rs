@@ -163,18 +163,24 @@ fn render_header(state: &GlobalState) -> Paragraph<'static> {
         .as_ref()
         .and_then(|p| state.players.get(p))
         .and_then(|p| p.track.as_ref())
-        .map(|t| format!("{} - {}", t.title, t.artist))
+        .map(|t| {
+            if t.artist.is_empty() {
+                t.title.clone()
+            } else {
+                format!("{} - {}", t.title, t.artist)
+            }
+        })
         .unwrap_or_else(|| "no track".to_string());
-    let status = state
+    let (status_label, status_color) = state
         .active_player
         .as_ref()
         .and_then(|p| state.players.get(p))
         .map(|p| match p.playback_status {
-            crate::state::PlaybackStatus::Playing => "playing",
-            crate::state::PlaybackStatus::Paused => "paused",
-            crate::state::PlaybackStatus::Stopped => "stopped",
+            crate::state::PlaybackStatus::Playing => ("Playing", Color::Green),
+            crate::state::PlaybackStatus::Paused => ("Paused", Color::Yellow),
+            crate::state::PlaybackStatus::Stopped => ("Stopped", Color::Red),
         })
-        .unwrap_or("stopped");
+        .unwrap_or(("Stopped", Color::Red));
     let source = match &state.lyrics.status {
         LyricsStatus::Ready => state
             .lyrics
@@ -187,22 +193,24 @@ fn render_header(state: &GlobalState) -> Paragraph<'static> {
         LyricsStatus::Idle => "idle".to_string(),
     };
 
-    let line = Line::from(vec![
-        Span::styled("Player: ", Style::default().bold()),
-        Span::raw(player),
-        Span::raw(" | "),
-        Span::styled("Track: ", Style::default().bold()),
-        Span::raw(title),
+    let title_line = Line::from(vec![
+        Span::styled("♪ ", Style::default().fg(Color::Cyan)),
+        Span::styled(title, Style::default().bold().fg(Color::White)),
     ]);
     let meta = Line::from(vec![
-        Span::styled("Status: ", Style::default().bold()),
-        Span::raw(status),
-        Span::raw(" | "),
-        Span::styled("Source: ", Style::default().bold()),
-        Span::raw(source),
+        Span::styled("Player: ", Style::default().fg(Color::DarkGray)),
+        Span::raw(player),
+        Span::raw("        "),
+        Span::styled("Status: ", Style::default().fg(Color::DarkGray)),
+        Span::styled("●", Style::default().fg(status_color).bold()),
+        Span::raw(" "),
+        Span::styled(status_label, Style::default().fg(status_color)),
+        Span::raw("   "),
+        Span::styled("Source: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(source, Style::default().fg(Color::Gray)),
     ]);
 
-    Paragraph::new(vec![line, meta])
+    Paragraph::new(vec![title_line, meta])
         .block(Block::default().borders(Borders::ALL).title("Status"))
 }
 
@@ -225,19 +233,27 @@ fn render_body(config: &Config, state: &GlobalState, height: usize) -> Paragraph
                     } else {
                         line.text.clone()
                     };
-                    if idx == current_index {
-                        content.push(Line::from(Span::styled(
-                            text,
+                    let distance = if idx > current_index {
+                        idx - current_index
+                    } else {
+                        current_index - idx
+                    };
+                    let (prefix, style) = if distance == 0 {
+                        (
+                            "> ",
                             Style::default()
                                 .fg(parse_color(&config.display.current_line_color))
                                 .bold(),
-                        )));
+                        )
+                    } else if distance == 1 {
+                        ("  ", Style::default().fg(Color::Gray))
                     } else {
-                        content.push(Line::from(Span::styled(
-                            text,
-                            Style::default().fg(Color::DarkGray),
-                        )));
-                    }
+                        ("  ", Style::default().fg(Color::DarkGray))
+                    };
+                    content.push(Line::from(vec![
+                        Span::styled(prefix, style),
+                        Span::styled(text, style),
+                    ]));
                 }
                 let total = content.len();
                 let pad = height.saturating_sub(total) / 2;
@@ -246,12 +262,15 @@ fn render_body(config: &Config, state: &GlobalState, height: usize) -> Paragraph
                 }
                 lines.extend(content);
             } else {
-                lines.push(Line::from("no lyrics"));
+                lines.push(Line::from(Span::styled(
+                    "No lyrics",
+                    Style::default().fg(Color::DarkGray),
+                )));
             }
         }
-        LyricsStatus::Loading => lines.push(Line::from("searching lyrics...")),
-        LyricsStatus::Failed(_) => lines.push(Line::from("lyrics failed")),
-        LyricsStatus::Idle => lines.push(Line::from("lyrics idle")),
+        LyricsStatus::Loading => lines.push(Line::from("Searching lyrics...")),
+        LyricsStatus::Failed(_) => lines.push(Line::from("Lyrics failed")),
+        LyricsStatus::Idle => lines.push(Line::from("Lyrics idle")),
     }
 
     Paragraph::new(lines)
@@ -276,7 +295,7 @@ fn find_line_index(lyrics: &Lyrics, time_ms: u64) -> (usize, Option<&crate::lyri
     (index, lyrics.lines.get(index))
 }
 
-fn render_progress(state: &GlobalState) -> Gauge<'static> {
+fn render_progress(state: &GlobalState) -> Paragraph<'static> {
     let (pos_ms, total_ms) = match state.active_player.as_ref() {
         Some(player) => state
             .players
@@ -291,18 +310,37 @@ fn render_progress(state: &GlobalState) -> Gauge<'static> {
     } else {
         0.0
     };
-
+    let bar_len = 30usize;
+    let marker = if bar_len == 0 {
+        0
+    } else {
+        (ratio * (bar_len as f64 - 1.0)).round() as usize
+    };
+    let mut bar = String::new();
+    for idx in 0..bar_len {
+        if idx == marker {
+            bar.push('▮');
+        } else {
+            bar.push('─');
+        }
+    }
     let label = format!(
-        "{} / {}",
+        "{} {} {}",
         format_time(pos_ms),
-        if total_ms > 0 { format_time(total_ms) } else { "--:--".to_string() }
+        bar,
+        if total_ms > 0 {
+            format_time(total_ms)
+        } else {
+            "--:--".to_string()
+        }
     );
 
-    Gauge::default()
+    Paragraph::new(Line::from(Span::styled(
+        label,
+        Style::default().fg(Color::Gray),
+    )))
+        .alignment(ratatui::layout::Alignment::Center)
         .block(Block::default().borders(Borders::ALL).title("Progress"))
-        .gauge_style(Style::default().fg(Color::Green).bg(Color::Black))
-        .ratio(ratio)
-        .label(Span::styled(label, Style::default().fg(Color::Black).bg(Color::White)))
 }
 
 fn render_help() -> Paragraph<'static> {
