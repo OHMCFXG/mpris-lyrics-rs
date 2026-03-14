@@ -140,7 +140,7 @@ fn render(
     let header = render_header(state);
     f.render_widget(header, chunks[0]);
 
-    let body = render_body(config, state);
+    let body = render_body(config, state, chunks[1].height as usize);
     f.render_widget(body, chunks[1]);
 
     let progress = render_progress(state);
@@ -205,8 +205,8 @@ fn render_header(state: &GlobalState) -> Paragraph<'static> {
         .block(Block::default().borders(Borders::ALL).title("Status"))
 }
 
-fn render_body(config: &Config, state: &GlobalState) -> Paragraph<'static> {
-    let mut lines = Vec::new();
+fn render_body(config: &Config, state: &GlobalState, height: usize) -> Paragraph<'static> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
     match &state.lyrics.status {
         LyricsStatus::Ready => {
             if let Some(lyrics) = &state.lyrics.lyrics {
@@ -216,6 +216,7 @@ fn render_body(config: &Config, state: &GlobalState) -> Paragraph<'static> {
                 let context = config.display.context_lines.max(2);
                 let start = current_index.saturating_sub(context);
                 let end = (current_index + context + 1).min(lyrics.lines.len());
+                let mut content: Vec<Line<'static>> = Vec::new();
                 for idx in start..end {
                     let line = &lyrics.lines[idx];
                     let text = if config.display.show_timestamp {
@@ -224,16 +225,25 @@ fn render_body(config: &Config, state: &GlobalState) -> Paragraph<'static> {
                         line.text.clone()
                     };
                     if idx == current_index {
-                        lines.push(Line::from(Span::styled(
+                        content.push(Line::from(Span::styled(
                             text,
                             Style::default()
                                 .fg(parse_color(&config.display.current_line_color))
                                 .bold(),
                         )));
                     } else {
-                        lines.push(Line::from(text));
+                        content.push(Line::from(Span::styled(
+                            text,
+                            Style::default().fg(Color::DarkGray),
+                        )));
                     }
                 }
+                let total = content.len();
+                let pad = height.saturating_sub(total) / 2;
+                for _ in 0..pad {
+                    lines.push(Line::from(""));
+                }
+                lines.extend(content);
             } else {
                 lines.push(Line::from("no lyrics"));
             }
@@ -243,7 +253,9 @@ fn render_body(config: &Config, state: &GlobalState) -> Paragraph<'static> {
         LyricsStatus::Idle => lines.push(Line::from("lyrics idle")),
     }
 
-    Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Lyrics"))
+    Paragraph::new(lines)
+        .alignment(ratatui::layout::Alignment::Center)
+        .block(Block::default().borders(Borders::ALL).title("Lyrics"))
 }
 
 fn active_position_ms(state: &GlobalState) -> u64 {
