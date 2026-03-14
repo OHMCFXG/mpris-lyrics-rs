@@ -1,11 +1,19 @@
-// MPRIS 交互模块
-// 导出与媒体播放器交互的结构体和函数
+use std::sync::Arc;
 
-mod events;
-mod listener;
-mod types;
+use anyhow::Result;
+use tracing::error;
 
-pub use events::*;
-pub use types::*;
+use crate::config::Config;
+use crate::events::EventHub;
 
-pub use listener::setup_mpris_listener;
+mod player;
+mod registry;
+
+pub async fn spawn(config: Arc<Config>, hub: EventHub) -> Result<()> {
+    tokio::spawn(async move {
+        if let Err(err) = registry::run(config, hub).await {
+            error!("mpris registry failed: {err}");
+        }
+    });
+    Ok(())
+}

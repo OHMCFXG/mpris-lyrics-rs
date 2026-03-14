@@ -1,11 +1,8 @@
-// 应用核心库
-
-// 模块导出
 pub mod app;
 pub mod config;
-pub mod display;
+pub mod events;
 pub mod lyrics;
 pub mod mpris;
-pub mod player;
-pub mod tui;
-pub mod utils;
+pub mod policy;
+pub mod state;
+pub mod ui;

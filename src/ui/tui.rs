@@ -1,0 +1,328 @@
+use std::io;
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::Result;
+use crossterm::{
+    event::{self, Event as CEvent, KeyCode, KeyEvent},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Style},
+    prelude::Stylize,
+    text::{Line, Span},
+    widgets::{Block, Borders, Gauge, Paragraph},
+    Terminal,
+};
+use tokio::sync::broadcast;
+
+use crate::config::Config;
+use crate::events::{Event, EventHub, UiCommand};
+use crate::lyrics::Lyrics;
+use crate::state::{GlobalState, LyricsStatus, StateStore};
+
+pub struct TuiApp {
+    config: Arc<Config>,
+    hub: EventHub,
+    store: Arc<StateStore>,
+}
+
+impl TuiApp {
+    pub fn new(config: Arc<Config>, hub: EventHub, store: Arc<StateStore>) -> Self {
+        Self { config, hub, store }
+    }
+
+    pub async fn run(self) -> Result<()> {
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        execute!(stdout, EnterAlternateScreen)?;
+        let backend = CrosstermBackend::new(stdout);
+        let mut terminal = Terminal::new(backend)?;
+
+        let input_hub = self.hub.clone();
+        let input_task = tokio::task::spawn_blocking(move || {
+            loop {
+                if event::poll(Duration::from_millis(100)).unwrap_or(false) {
+                    if let Ok(CEvent::Key(key)) = event::read() {
+                        if handle_key(key, &input_hub) {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        let mut rx = self.hub.subscribe();
+        let mut tick = tokio::time::interval(Duration::from_millis(250));
+        let mut should_quit = false;
+
+        render(&mut terminal, &self.config, &self.store.snapshot().await)?;
+
+        while !should_quit {
+            tokio::select! {
+                _ = tick.tick() => {
+                    let snapshot = self.store.snapshot().await;
+                    if should_tick(&snapshot) {
+                        render(&mut terminal, &self.config, &snapshot)?;
+                    }
+                }
+                event = rx.recv() => {
+                    let event = match event {
+                        Ok(ev) => ev,
+                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    };
+
+                    match event {
+                        Event::UiCommand { command } => {
+                            if matches!(command, UiCommand::Quit) {
+                                should_quit = true;
+                            }
+                        }
+                        Event::TrackChanged { .. }
+                        | Event::PlaybackStatusChanged { .. }
+                        | Event::LyricsUpdated { .. }
+                        | Event::LyricsFailed { .. }
+                        | Event::ActivePlayerChanged { .. } => {
+                            let snapshot = self.store.snapshot().await;
+                            render(&mut terminal, &self.config, &snapshot)?;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        let _ = input_task.await;
+        disable_raw_mode()?;
+        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+        terminal.show_cursor()?;
+        Ok(())
+    }
+}
+
+fn handle_key(key: KeyEvent, hub: &EventHub) -> bool {
+    match key.code {
+        KeyCode::Char('q') | KeyCode::Esc => {
+            hub.emit(Event::UiCommand { command: UiCommand::Quit });
+            true
+        }
+        KeyCode::Tab => {
+            hub.emit(Event::UiCommand {
+                command: UiCommand::SelectNextPlayer,
+            });
+            false
+        }
+        _ => false,
+    }
+}
+
+fn render(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    config: &Config,
+    state: &GlobalState,
+) -> Result<()> {
+    terminal.draw(|f| {
+        let size = f.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Min(6),
+            Constraint::Length(3),
+            Constraint::Length(3),
+        ])
+        .split(size);
+
+    let header = render_header(state);
+    f.render_widget(header, chunks[0]);
+
+    let body = render_body(config, state);
+    f.render_widget(body, chunks[1]);
+
+    let progress = render_progress(state);
+    f.render_widget(progress, chunks[2]);
+
+    let help = render_help();
+    f.render_widget(help, chunks[3]);
+    })?;
+    Ok(())
+}
+
+fn render_header(state: &GlobalState) -> Paragraph<'static> {
+    let player = state
+        .active_player
+        .as_deref()
+        .unwrap_or("no player");
+    let title = state
+        .active_player
+        .as_ref()
+        .and_then(|p| state.players.get(p))
+        .and_then(|p| p.track.as_ref())
+        .map(|t| format!("{} - {}", t.title, t.artist))
+        .unwrap_or_else(|| "no track".to_string());
+    let status = state
+        .active_player
+        .as_ref()
+        .and_then(|p| state.players.get(p))
+        .map(|p| match p.playback_status {
+            crate::state::PlaybackStatus::Playing => "playing",
+            crate::state::PlaybackStatus::Paused => "paused",
+            crate::state::PlaybackStatus::Stopped => "stopped",
+        })
+        .unwrap_or("stopped");
+    let source = match &state.lyrics.status {
+        LyricsStatus::Ready => state
+            .lyrics
+            .lyrics
+            .as_ref()
+            .map(|l| l.metadata.source.clone())
+            .unwrap_or_else(|| "unknown".to_string()),
+        LyricsStatus::Loading => "searching".to_string(),
+        LyricsStatus::Failed(_) => "failed".to_string(),
+        LyricsStatus::Idle => "idle".to_string(),
+    };
+
+    let line = Line::from(vec![
+        Span::styled("Player: ", Style::default().bold()),
+        Span::raw(player.to_string()),
+        Span::raw(" | "),
+        Span::styled("Track: ", Style::default().bold()),
+        Span::raw(title),
+    ]);
+    let meta = Line::from(vec![
+        Span::styled("Status: ", Style::default().bold()),
+        Span::raw(status),
+        Span::raw(" | "),
+        Span::styled("Source: ", Style::default().bold()),
+        Span::raw(source),
+    ]);
+
+    Paragraph::new(vec![line, meta])
+        .block(Block::default().borders(Borders::ALL).title("Status"))
+}
+
+fn render_body(config: &Config, state: &GlobalState) -> Paragraph<'static> {
+    let mut lines = Vec::new();
+    match &state.lyrics.status {
+        LyricsStatus::Ready => {
+            if let Some(lyrics) = &state.lyrics.lyrics {
+                let position_ms = active_position_ms(state);
+                let position_with_advance = position_ms + config.display.lyric_advance_time_ms;
+                let (current_index, _) = find_line_index(lyrics, position_with_advance);
+                let context = config.display.context_lines.max(2);
+                let start = current_index.saturating_sub(context);
+                let end = (current_index + context + 1).min(lyrics.lines.len());
+                for idx in start..end {
+                    let line = &lyrics.lines[idx];
+                    let text = if config.display.show_timestamp {
+                        format!("[{}] {}", format_time(line.start_time_ms), line.text)
+                    } else {
+                        line.text.clone()
+                    };
+                    if idx == current_index {
+                        lines.push(Line::from(Span::styled(
+                            text,
+                            Style::default()
+                                .fg(parse_color(&config.display.current_line_color))
+                                .bold(),
+                        )));
+                    } else {
+                        lines.push(Line::from(text));
+                    }
+                }
+            } else {
+                lines.push(Line::from("no lyrics"));
+            }
+        }
+        LyricsStatus::Loading => lines.push(Line::from("searching lyrics...")),
+        LyricsStatus::Failed(_) => lines.push(Line::from("lyrics failed")),
+        LyricsStatus::Idle => lines.push(Line::from("lyrics idle")),
+    }
+
+    Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Lyrics"))
+}
+
+fn active_position_ms(state: &GlobalState) -> u64 {
+    let Some(player) = &state.active_player else { return 0; };
+    let Some(player_state) = state.players.get(player) else { return 0; };
+    player_state.estimate_position_ms()
+}
+
+fn find_line_index(lyrics: &Lyrics, time_ms: u64) -> (usize, Option<&crate::lyrics::LyricLine>) {
+    if lyrics.lines.is_empty() {
+        return (0, None);
+    }
+    let idx = lyrics
+        .lines
+        .partition_point(|line| line.start_time_ms <= time_ms);
+    let index = if idx == 0 { 0 } else { idx - 1 };
+    (index, lyrics.lines.get(index))
+}
+
+fn render_progress(state: &GlobalState) -> Gauge<'static> {
+    let (pos_ms, total_ms) = match state.active_player.as_ref() {
+        Some(player) => state
+            .players
+            .get(player)
+            .and_then(|p| p.track.as_ref().map(|t| (p.estimate_position_ms(), t.length_ms)))
+            .unwrap_or((0, 0)),
+        None => (0, 0),
+    };
+
+    let ratio = if total_ms > 0 {
+        (pos_ms as f64 / total_ms as f64).min(1.0)
+    } else {
+        0.0
+    };
+
+    Gauge::default()
+        .block(Block::default().borders(Borders::ALL).title("Progress"))
+        .gauge_style(Style::default().fg(Color::Green))
+        .ratio(ratio)
+        .label(format!(
+            "{} / {}",
+            format_time(pos_ms),
+            if total_ms > 0 { format_time(total_ms) } else { "--:--".to_string() }
+        ))
+}
+
+fn render_help() -> Paragraph<'static> {
+    let line = Line::from(vec![
+        Span::styled("q/Esc ", Style::default().bold()),
+        Span::raw("quit  "),
+        Span::styled("Tab ", Style::default().bold()),
+        Span::raw("next player"),
+    ]);
+    Paragraph::new(vec![line])
+        .block(Block::default().borders(Borders::ALL).title("Help"))
+}
+
+fn format_time(ms: u64) -> String {
+    let total_seconds = ms / 1000;
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    format!("{:02}:{:02}", minutes, seconds)
+}
+
+fn parse_color(name: &str) -> Color {
+    match name.to_lowercase().as_str() {
+        "red" => Color::Red,
+        "green" => Color::Green,
+        "yellow" => Color::Yellow,
+        "blue" => Color::Blue,
+        "magenta" => Color::Magenta,
+        "cyan" => Color::Cyan,
+        "white" => Color::White,
+        _ => Color::Green,
+    }
+}
+
+fn should_tick(state: &GlobalState) -> bool {
+    let Some(active) = &state.active_player else { return false; };
+    let Some(player_state) = state.players.get(active) else { return false; };
+    player_state.playback_status == crate::state::PlaybackStatus::Playing
+}
