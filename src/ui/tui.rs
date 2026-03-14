@@ -12,7 +12,7 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     prelude::Stylize,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -237,24 +237,19 @@ fn render_body(config: &Config, state: &GlobalState, height: usize) -> Paragraph
                     } else {
                         current_index - idx
                     };
-                    let (prefix, style) = if distance == 0 {
-                        (
-                            "> ",
-                            Style::default()
-                                .fg(parse_color(&config.display.current_line_color))
-                                .bold(),
-                        )
-                    } else if distance == 1 {
-                        ("  ", Style::default().fg(Color::DarkGray))
-                    } else if distance == 2 {
-                        ("  ", Style::default().fg(Color::Rgb(80, 80, 80)))
-                    } else {
-                        ("  ", Style::default().fg(Color::Rgb(60, 60, 60)))
-                    };
+                    let (prefix, style) = lyric_line_style(
+                        distance,
+                        context,
+                        parse_color(&config.display.current_line_color),
+                    );
                     content.push(Line::from(vec![
                         Span::styled(prefix, style),
                         Span::styled(text, style),
                     ]));
+                    if distance == 0 {
+                        content.insert(content.len() - 1, Line::from(""));
+                        content.push(Line::from(""));
+                    }
                 }
                 let total = content.len();
                 let pad = height.saturating_sub(total) / 2;
@@ -361,6 +356,29 @@ fn format_time(ms: u64) -> String {
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
     format!("{:02}:{:02}", minutes, seconds)
+}
+
+fn lyric_line_style(distance: usize, context: usize, highlight: Color) -> (&'static str, Style) {
+    if distance == 0 {
+        return (
+            "> ",
+            Style::default().fg(highlight).bold(),
+        );
+    }
+
+    let steps = context.max(1);
+    let clamped = distance.min(steps);
+    let max: i32 = 180;
+    let min: i32 = 70;
+    let range = max - min;
+    let val = max - (range * clamped as i32) / steps as i32;
+    let val = val.clamp(min, max) as u8;
+
+    let mut style = Style::default().fg(Color::Rgb(val, val, val));
+    if distance >= 2 {
+        style = style.add_modifier(Modifier::DIM);
+    }
+    ("  ", style)
 }
 
 fn format_player_name(player: &str) -> String {
