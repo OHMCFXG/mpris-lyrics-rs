@@ -242,8 +242,14 @@ fn update_position(player: &mut PlayerState, position_ms: u64) {
 
 fn update_status(player: &mut PlayerState, status: PlaybackStatus) {
     let now = Instant::now();
+    if status != PlaybackStatus::Playing {
+        // Lock in the current progress to avoid jumping backward on pause/stop.
+        player.position_ms = player.estimate_position_ms();
+        player.position_ts = now;
+    } else {
+        player.position_ts = now;
+    }
     player.playback_status = status;
-    player.position_ts = now;
     player.last_seen = now;
 }
 
