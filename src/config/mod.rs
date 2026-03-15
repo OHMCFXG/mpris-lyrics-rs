@@ -54,7 +54,7 @@ impl Default for Config {
             display: DisplayConfig {
                 show_timestamp: false,
                 show_progress: true,
-                context_lines: 2,
+                context_lines: 5,
                 current_line_color: "green".to_string(),
                 simple_output: false,
                 enable_tui: true,
