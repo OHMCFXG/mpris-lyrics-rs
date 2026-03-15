@@ -46,6 +46,7 @@ impl SimpleOutput {
                     };
 
                     match event {
+                        Event::Shutdown => return Ok(()),
                         Event::TrackChanged { .. }
                         | Event::PlaybackStatusChanged { .. }
                         | Event::LyricsUpdated { .. }

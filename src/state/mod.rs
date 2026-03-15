@@ -222,6 +222,7 @@ impl StateStore {
                 UiCommand::Quit | UiCommand::ToggleHelp => {}
             },
             Event::ActivePlayerChanged { .. } => {}
+            Event::Shutdown => {}
         }
 
         derived

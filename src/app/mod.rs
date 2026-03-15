@@ -24,34 +24,34 @@ impl App {
         let hub = EventHub::new(256);
         let store = Arc::new(StateStore::new());
 
-        spawn_state_loop(store.clone(), hub.clone());
+        let state_handle = spawn_state_loop(store.clone(), hub.clone());
 
         let providers = providers::get_enabled_providers(&self.config);
         let lyrics_service = LyricsService::new(providers, hub.clone(), store.clone());
-        tokio::spawn(async move {
+        let lyrics_handle = tokio::spawn(async move {
             if let Err(err) = lyrics_service.run().await {
                 error!("lyrics service failed: {err}");
             }
         });
 
-        if self.config.display.simple_output || !self.config.display.enable_tui {
+        let ui_handle = if self.config.display.simple_output || !self.config.display.enable_tui {
             let ui = SimpleOutput::new(self.config.clone(), hub.clone(), store.clone());
             tokio::spawn(async move {
                 if let Err(err) = ui.run().await {
                     error!("simple output failed: {err}");
                 }
-            });
+            })
         } else {
             let tui = TuiApp::new(self.config.clone(), hub.clone(), store.clone());
             tokio::spawn(async move {
                 if let Err(err) = tui.run().await {
                     error!("tui failed: {err}");
                 }
-            });
-        }
+            })
+        };
 
         // Start MPRIS last so initial events are not missed by lyrics/UI tasks.
-        mpris::spawn(self.config.clone(), hub.clone()).await?;
+        let mpris_handle = mpris::spawn(self.config.clone(), hub.clone());
 
         if self.config.display.simple_output {
             tracing::debug!("app started; simple output mode");
@@ -76,11 +76,16 @@ impl App {
                 }
             }
         }
+        hub.emit(Event::Shutdown);
+        let _ = state_handle.await;
+        let _ = lyrics_handle.await;
+        let _ = ui_handle.await;
+        let _ = mpris_handle.await;
         Ok(())
     }
 }
 
-fn spawn_state_loop(store: Arc<StateStore>, hub: EventHub) {
+fn spawn_state_loop(store: Arc<StateStore>, hub: EventHub) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut rx = hub.subscribe();
         loop {
@@ -90,10 +95,13 @@ fn spawn_state_loop(store: Arc<StateStore>, hub: EventHub) {
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
             };
 
+            if matches!(event, Event::Shutdown) {
+                break;
+            }
             let derived = store.handle_event(&event).await;
             for ev in derived {
                 hub.emit(ev);
             }
         }
-    });
+    })
 }

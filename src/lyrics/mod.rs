@@ -143,6 +143,7 @@ impl LyricsService {
             };
 
             match event {
+                Event::Shutdown => break,
                 Event::TrackChanged { player, track } => {
                     tracing::debug!(
                         "lyrics: track changed player={} title='{}' artist='{}'",

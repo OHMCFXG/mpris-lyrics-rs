@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use futures_util::StreamExt;
+use tokio::sync::broadcast;
 use tracing::{debug, warn};
 use zbus::fdo::{PropertiesChanged, PropertiesProxy};
 use zbus::names::InterfaceName;
@@ -51,9 +52,9 @@ async fn run(
 
     let mut props_stream = props.receive_properties_changed().await?;
     let mut seeked_stream = player_proxy.receive_signal("Seeked").await?;
-    let mut fallback_tick = tokio::time::interval(Duration::from_secs(
-        fallback_sync_interval_seconds.max(1),
-    ));
+    let mut fallback_tick =
+        tokio::time::interval(Duration::from_secs(fallback_sync_interval_seconds.max(1)));
+    let mut shutdown_rx = hub.subscribe();
 
     loop {
         tokio::select! {
@@ -110,6 +111,13 @@ async fn run(
                             position_ms,
                         });
                     }
+                }
+            }
+            shutdown = shutdown_rx.recv() => {
+                match shutdown {
+                    Ok(Event::Shutdown) | Err(broadcast::error::RecvError::Closed) => break,
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
                 }
             }
         }
@@ -254,7 +262,9 @@ fn parse_length_key(dict: &Dict<'_, '_>, key: &str) -> Option<u64> {
 
 fn parse_artists(dict: &Dict<'_, '_>) -> String {
     let artists: Option<Array<'_>> = dict.get(&"xesam:artist").ok().flatten();
-    let Some(array) = artists else { return String::new(); };
+    let Some(array) = artists else {
+        return String::new();
+    };
 
     let mut names = Vec::new();
     for val in array.inner() {

@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use futures_util::StreamExt;
+use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 use zbus::fdo::DBusProxy;
 use zbus::Connection;
@@ -19,6 +20,7 @@ pub async fn run(config: Arc<Config>, hub: EventHub) -> Result<()> {
     let dbus = DBusProxy::new(&conn).await?;
 
     let mut known: HashSet<String> = HashSet::new();
+    let mut shutdown_rx = hub.subscribe();
 
     let names = dbus.list_names().await?;
     for name in names {
@@ -41,44 +43,56 @@ pub async fn run(config: Arc<Config>, hub: EventHub) -> Result<()> {
     }
 
     let mut stream = dbus.receive_name_owner_changed().await?;
-    while let Some(signal) = stream.next().await {
-        let args = match signal.args() {
-            Ok(args) => args,
-            Err(err) => {
-                warn!("failed to parse NameOwnerChanged: {err}");
-                continue;
-            }
-        };
+    loop {
+        tokio::select! {
+            maybe_signal = stream.next() => {
+                let Some(signal) = maybe_signal else { break; };
+                let args = match signal.args() {
+                    Ok(args) => args,
+                    Err(err) => {
+                        warn!("failed to parse NameOwnerChanged: {err}");
+                        continue;
+                    }
+                };
 
-        let name = args.name.to_string();
-        if !is_mpris_name(&name) || is_blacklisted(&config, &name) {
-            continue;
-        }
+                let name = args.name.to_string();
+                if !is_mpris_name(&name) || is_blacklisted(&config, &name) {
+                    continue;
+                }
 
-        let appeared = args.old_owner.is_none() && args.new_owner.is_some();
-        let disappeared = args.old_owner.is_some() && args.new_owner.is_none();
+                let appeared = args.old_owner.is_none() && args.new_owner.is_some();
+                let disappeared = args.old_owner.is_some() && args.new_owner.is_none();
 
-        if appeared {
-            if known.insert(name.clone()) {
-                info!("player appeared: {name}");
-                hub.emit(Event::PlayerAppeared {
-                    player: name.clone(),
-                });
-                player::spawn(
-                    conn.clone(),
-                    name,
-                    hub.clone(),
-                    config.mpris.fallback_sync_interval_seconds,
-                )
-                .await;
+                if appeared {
+                    if known.insert(name.clone()) {
+                        info!("player appeared: {name}");
+                        hub.emit(Event::PlayerAppeared {
+                            player: name.clone(),
+                        });
+                        player::spawn(
+                            conn.clone(),
+                            name,
+                            hub.clone(),
+                            config.mpris.fallback_sync_interval_seconds,
+                        )
+                        .await;
+                    }
+                } else if disappeared {
+                    if known.remove(&name) {
+                        info!("player disappeared: {name}");
+                        hub.emit(Event::PlayerDisappeared { player: name });
+                    }
+                } else {
+                    debug!("name owner changed: {name}");
+                }
             }
-        } else if disappeared {
-            if known.remove(&name) {
-                info!("player disappeared: {name}");
-                hub.emit(Event::PlayerDisappeared { player: name });
+            shutdown = shutdown_rx.recv() => {
+                match shutdown {
+                    Ok(Event::Shutdown) | Err(broadcast::error::RecvError::Closed) => break,
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                }
             }
-        } else {
-            debug!("name owner changed: {name}");
         }
     }
 

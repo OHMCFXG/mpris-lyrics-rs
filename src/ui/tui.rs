@@ -1,4 +1,5 @@
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -44,8 +45,13 @@ impl TuiApp {
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
         let input_hub = self.hub.clone();
+        let input_shutdown = shutdown_flag.clone();
         let input_task = tokio::task::spawn_blocking(move || loop {
+            if input_shutdown.load(Ordering::Relaxed) {
+                break;
+            }
             if event::poll(Duration::from_millis(100)).unwrap_or(false) {
                 if let Ok(CEvent::Key(key)) = event::read() {
                     if handle_key(key, &input_hub) {
@@ -80,7 +86,12 @@ impl TuiApp {
                         Event::UiCommand { command } => {
                             if matches!(command, UiCommand::Quit) {
                                 should_quit = true;
+                                shutdown_flag.store(true, Ordering::Relaxed);
                             }
+                        }
+                        Event::Shutdown => {
+                            should_quit = true;
+                            shutdown_flag.store(true, Ordering::Relaxed);
                         }
                         Event::TrackChanged { .. }
                         | Event::PlaybackStatusChanged { .. }
@@ -96,6 +107,7 @@ impl TuiApp {
             }
         }
 
+        shutdown_flag.store(true, Ordering::Relaxed);
         let _ = input_task.await;
         Ok(())
     }
