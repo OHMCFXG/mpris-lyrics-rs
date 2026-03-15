@@ -87,7 +87,8 @@ impl Config {
         });
 
         if !config_path.exists() {
-            let default_config = Config::default();
+            let mut default_config = Config::default();
+            default_config.normalize();
             let toml = toml::to_string_pretty(&default_config)?;
 
             if let Some(parent) = config_path.parent() {
@@ -98,7 +99,33 @@ impl Config {
         }
 
         let content = fs::read_to_string(&config_path)?;
-        let cfg: Config = toml::from_str(&content)?;
+        let mut cfg: Config = toml::from_str(&content)?;
+        cfg.normalize();
         Ok(cfg)
     }
+
+    pub fn normalize(&mut self) {
+        self.players.blacklist = normalize_blacklist(&self.players.blacklist);
+    }
+
+    pub fn apply_cli(&mut self, args: &CliOverrides) {
+        if args.simple_output {
+            self.display.simple_output = true;
+            self.display.enable_tui = false;
+            self.display.show_progress = false;
+        } else if args.no_clear {
+            self.display.show_progress = false;
+            self.display.enable_tui = false;
+        }
+    }
+}
+
+fn normalize_blacklist(list: &HashSet<String>) -> HashSet<String> {
+    list.iter().map(|v| v.to_lowercase()).collect()
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CliOverrides {
+    pub simple_output: bool,
+    pub no_clear: bool,
 }

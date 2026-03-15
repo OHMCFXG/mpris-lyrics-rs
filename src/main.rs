@@ -6,7 +6,7 @@ use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 use mpris_lyrics_rs::app::App;
-use mpris_lyrics_rs::config::Config;
+use mpris_lyrics_rs::config::{CliOverrides, Config};
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -17,10 +17,18 @@ struct Args {
     #[arg(long, default_value_t = false)]
     debug: bool,
 
-    #[arg(long, default_value_t = false, help = "do not clear screen; keep logs visible")]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "do not clear screen; keep logs visible"
+    )]
     no_clear: bool,
 
-    #[arg(long, default_value_t = false, help = "simple output mode for integrations")]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "simple output mode for integrations"
+    )]
     simple_output: bool,
 }
 
@@ -28,15 +36,11 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let mut config = Config::load(args.config)?;
-
-    if args.simple_output {
-        config.display.simple_output = true;
-        config.display.enable_tui = false;
-        config.display.show_progress = false;
-    } else if args.no_clear {
-        config.display.show_progress = false;
-        config.display.enable_tui = false;
-    }
+    let overrides = CliOverrides {
+        simple_output: args.simple_output,
+        no_clear: args.no_clear,
+    };
+    config.apply_cli(&overrides);
 
     if config.display.simple_output {
         let filter = if args.debug { "debug" } else { "error" };

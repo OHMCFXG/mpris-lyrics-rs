@@ -27,7 +27,9 @@ pub async fn run(config: Arc<Config>, hub: EventHub) -> Result<()> {
             continue;
         }
         if known.insert(name.clone()) {
-            hub.emit(Event::PlayerAppeared { player: name.clone() });
+            hub.emit(Event::PlayerAppeared {
+                player: name.clone(),
+            });
             player::spawn(
                 conn.clone(),
                 name,
@@ -59,7 +61,9 @@ pub async fn run(config: Arc<Config>, hub: EventHub) -> Result<()> {
         if appeared {
             if known.insert(name.clone()) {
                 info!("player appeared: {name}");
-                hub.emit(Event::PlayerAppeared { player: name.clone() });
+                hub.emit(Event::PlayerAppeared {
+                    player: name.clone(),
+                });
                 player::spawn(
                     conn.clone(),
                     name,
@@ -87,9 +91,5 @@ fn is_mpris_name(name: &str) -> bool {
 
 fn is_blacklisted(config: &Config, name: &str) -> bool {
     let lower = name.to_lowercase();
-    config
-        .players
-        .blacklist
-        .iter()
-        .any(|k| lower.contains(&k.to_lowercase()))
+    config.players.blacklist.iter().any(|k| lower.contains(k))
 }
