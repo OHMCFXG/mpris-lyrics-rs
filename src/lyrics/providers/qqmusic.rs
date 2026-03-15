@@ -7,8 +7,8 @@ use serde_json::{json, Value};
 use tracing::{debug, info, warn};
 
 use crate::config::QQMusicConfig;
+use crate::lyrics::providers::{find_best_match, Candidate};
 use crate::lyrics::{parse_lrc_text, Lyrics, LyricsProvider};
-use crate::lyrics::providers::similarity;
 use crate::state::TrackInfo;
 
 const REQWEST_TIMEOUT: u64 = 10;
@@ -108,11 +108,7 @@ impl QQMusicProvider {
         Ok(lyric_text.to_string())
     }
 
-    async fn find_best_match(
-        &self,
-        data: &Value,
-        track: &TrackInfo,
-    ) -> Result<Option<String>> {
+    async fn find_best_match(&self, data: &Value, track: &TrackInfo) -> Result<Option<String>> {
         let all_song = data
             .pointer("/req/data/body/item_song")
             .ok_or_else(|| anyhow!("qqmusic: missing /req/data/body/item_song"))?
@@ -123,62 +119,41 @@ impl QQMusicProvider {
             return Ok(None);
         }
 
-        let mut best_match_index = 0usize;
-        let mut best_match_score = 0.0f64;
-        let mut exact_duration_match: Option<usize> = None;
-        let mut exact_duration_match_score = 0.0f64;
+        let mut candidates = Vec::with_capacity(all_song.len());
+        for song in all_song {
+            let title = song["songname"].as_str().unwrap_or_default().to_string();
+            let album = song["albumname"].as_str().unwrap_or_default().to_string();
 
-        for (i, song) in all_song.iter().enumerate() {
-            let song_title = song["songname"].as_str().unwrap_or_default();
-            let title_score = similarity(&track.title, song_title);
-
-            let mut artist_score = 0.0;
-            if let Some(artists) = song["singer"].as_array() {
-                for artist in artists {
-                    let current_artist = artist["name"].as_str().unwrap_or_default();
-                    let score = similarity(&track.artist, current_artist);
-                    if score > artist_score {
-                        artist_score = score;
+            let mut artists = Vec::new();
+            if let Some(list) = song["singer"].as_array() {
+                for artist in list {
+                    if let Some(name) = artist["name"].as_str() {
+                        artists.push(name.to_string());
                     }
                 }
             }
 
-            let album_name = song["albumname"].as_str().unwrap_or_default();
-            let album_score = similarity(&track.album, album_name);
+            let duration_ms = song["interval"].as_u64().map(|s| s * 1000);
+            let id = song["mid"].as_str().unwrap_or_default().to_string();
 
-            let score = title_score * 2.0 + artist_score + album_score;
-
-            if track.length_ms > 0 {
-                if let Some(song_duration) = song["interval"].as_u64() {
-                    let song_ms = song_duration * 1000;
-                    let diff_ms = if song_ms > track.length_ms {
-                        song_ms - track.length_ms
-                    } else {
-                        track.length_ms - song_ms
-                    };
-                    if diff_ms < 5000 {
-                        if exact_duration_match.is_none() || score > exact_duration_match_score {
-                            exact_duration_match = Some(i);
-                            exact_duration_match_score = score;
-                        }
-                    }
-                }
-            }
-
-            if score > best_match_score {
-                best_match_score = score;
-                best_match_index = i;
-            }
+            candidates.push(Candidate {
+                id,
+                title,
+                artists,
+                album,
+                duration_ms,
+            });
         }
 
-        let final_index = exact_duration_match.unwrap_or(best_match_index);
-        let song = &all_song[final_index];
-        let song_mid = song["mid"].as_str().unwrap_or_default().to_string();
+        let candidate = match find_best_match(&candidates, track) {
+            Some(candidate) => candidate,
+            None => return Ok(None),
+        };
 
-        if song_mid.is_empty() {
+        if candidate.id.is_empty() {
             Ok(None)
         } else {
-            Ok(Some(song_mid))
+            Ok(Some(candidate.id.clone()))
         }
     }
 }
@@ -212,7 +187,10 @@ impl LyricsProvider for QQMusicProvider {
         let lyrics = parse_lrc_text(&lyric_text, track, "qqmusic")?;
 
         if lyrics.lines.is_empty() {
-            warn!("qqmusic returned empty lyrics: {} - {}", track.title, track.artist);
+            warn!(
+                "qqmusic returned empty lyrics: {} - {}",
+                track.title, track.artist
+            );
             return Ok(None);
         }
 
