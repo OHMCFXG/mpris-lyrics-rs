@@ -20,21 +20,26 @@ use ratatui::{
     Terminal,
 };
 use tokio::sync::broadcast;
+use tokio::sync::watch;
 
 use crate::config::Config;
 use crate::events::{Event, EventHub, UiCommand};
-use crate::state::{GlobalState, LyricsStatus, PlayerState, StateStore};
+use crate::state::{GlobalState, LyricsStatus, PlayerState};
 use crate::ui::common;
 
 pub struct TuiApp {
     config: Arc<Config>,
     hub: EventHub,
-    store: Arc<StateStore>,
+    state_rx: watch::Receiver<GlobalState>,
 }
 
 impl TuiApp {
-    pub fn new(config: Arc<Config>, hub: EventHub, store: Arc<StateStore>) -> Self {
-        Self { config, hub, store }
+    pub fn new(config: Arc<Config>, hub: EventHub, state_rx: watch::Receiver<GlobalState>) -> Self {
+        Self {
+            config,
+            hub,
+            state_rx,
+        }
     }
 
     pub async fn run(self) -> Result<()> {
@@ -62,18 +67,28 @@ impl TuiApp {
         });
 
         let mut rx = self.hub.subscribe();
+        let mut state_rx = self.state_rx.clone();
         let mut tick = tokio::time::interval(Duration::from_millis(250));
         let mut should_quit = false;
 
-        render(&mut terminal, &self.config, &self.store.snapshot().await)?;
+        render(&mut terminal, &self.config, &state_rx.borrow().clone())?;
 
         while !should_quit {
             tokio::select! {
                 _ = tick.tick() => {
-                    let snapshot = self.store.snapshot().await;
+                    let snapshot = state_rx.borrow().clone();
                     if common::should_tick(&snapshot) {
                         render(&mut terminal, &self.config, &snapshot)?;
                     }
+                }
+                changed = state_rx.changed() => {
+                    if changed.is_err() {
+                        should_quit = true;
+                        shutdown_flag.store(true, Ordering::Relaxed);
+                        continue;
+                    }
+                    let snapshot = state_rx.borrow().clone();
+                    render(&mut terminal, &self.config, &snapshot)?;
                 }
                 event = rx.recv() => {
                     let event = match event {
@@ -92,14 +107,6 @@ impl TuiApp {
                         Event::Shutdown => {
                             should_quit = true;
                             shutdown_flag.store(true, Ordering::Relaxed);
-                        }
-                        Event::TrackChanged { .. }
-                        | Event::PlaybackStatusChanged { .. }
-                        | Event::LyricsUpdated { .. }
-                        | Event::LyricsFailed { .. }
-                        | Event::ActivePlayerChanged { .. } => {
-                            let snapshot = self.store.snapshot().await;
-                            render(&mut terminal, &self.config, &snapshot)?;
                         }
                         _ => {}
                     }

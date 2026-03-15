@@ -2,61 +2,45 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::{Config, DisplayConfig};
-use crate::events::{Event, EventHub};
-use crate::state::{GlobalState, StateStore};
+use crate::state::GlobalState;
 use crate::ui::common;
 use anyhow::Result;
-use tokio::sync::broadcast;
+use tokio::sync::watch;
 use tokio::time;
 
 pub struct SimpleOutput {
     config: Arc<Config>,
-    hub: EventHub,
-    store: Arc<StateStore>,
+    state_rx: watch::Receiver<GlobalState>,
     last_output: String,
 }
 
 impl SimpleOutput {
-    pub fn new(config: Arc<Config>, hub: EventHub, store: Arc<StateStore>) -> Self {
+    pub fn new(config: Arc<Config>, state_rx: watch::Receiver<GlobalState>) -> Self {
         Self {
             config,
-            hub,
-            store,
+            state_rx,
             last_output: String::new(),
         }
     }
 
     pub async fn run(self) -> Result<()> {
         let mut this = self;
-        let mut rx = this.hub.subscribe();
+        let mut state_rx = this.state_rx.clone();
         let mut tick = time::interval(Duration::from_millis(400));
         loop {
             tokio::select! {
                 _ = tick.tick() => {
-                    let snapshot = this.store.snapshot().await;
+                    let snapshot = state_rx.borrow().clone();
                     if common::should_tick(&snapshot) {
                         emit_output(&mut this, &snapshot);
                     }
                 }
-                event = rx.recv() => {
-                    let event = match event {
-                        Ok(ev) => ev,
-                        Err(broadcast::error::RecvError::Closed) => break,
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    };
-
-                    match event {
-                        Event::Shutdown => return Ok(()),
-                        Event::TrackChanged { .. }
-                        | Event::PlaybackStatusChanged { .. }
-                        | Event::LyricsUpdated { .. }
-                        | Event::LyricsFailed { .. }
-                        | Event::ActivePlayerChanged { .. } => {
-                            let snapshot = this.store.snapshot().await;
-                            emit_output(&mut this, &snapshot);
-                        }
-                        _ => {}
+                changed = state_rx.changed() => {
+                    if changed.is_err() {
+                        break;
                     }
+                    let snapshot = state_rx.borrow().clone();
+                    emit_output(&mut this, &snapshot);
                 }
             }
         }

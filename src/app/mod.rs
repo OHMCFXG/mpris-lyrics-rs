@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::broadcast;
+use tokio::sync::watch;
 use tracing::{error, info};
 
 use crate::config::Config;
@@ -24,7 +25,9 @@ impl App {
         let hub = EventHub::new(256);
         let store = Arc::new(StateStore::new());
 
-        let state_handle = spawn_state_loop(store.clone(), hub.clone());
+        let initial_state = store.snapshot().await;
+        let (state_tx, state_rx) = watch::channel(initial_state);
+        let state_handle = spawn_state_loop(store.clone(), hub.clone(), state_tx);
 
         let providers = providers::get_enabled_providers(&self.config);
         let lyrics_service = LyricsService::new(providers, hub.clone(), store.clone());
@@ -35,14 +38,14 @@ impl App {
         });
 
         let ui_handle = if self.config.display.simple_output || !self.config.display.enable_tui {
-            let ui = SimpleOutput::new(self.config.clone(), hub.clone(), store.clone());
+            let ui = SimpleOutput::new(self.config.clone(), state_rx.clone());
             tokio::spawn(async move {
                 if let Err(err) = ui.run().await {
                     error!("simple output failed: {err}");
                 }
             })
         } else {
-            let tui = TuiApp::new(self.config.clone(), hub.clone(), store.clone());
+            let tui = TuiApp::new(self.config.clone(), hub.clone(), state_rx.clone());
             tokio::spawn(async move {
                 if let Err(err) = tui.run().await {
                     error!("tui failed: {err}");
@@ -85,7 +88,11 @@ impl App {
     }
 }
 
-fn spawn_state_loop(store: Arc<StateStore>, hub: EventHub) -> tokio::task::JoinHandle<()> {
+fn spawn_state_loop(
+    store: Arc<StateStore>,
+    hub: EventHub,
+    state_tx: watch::Sender<crate::state::GlobalState>,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut rx = hub.subscribe();
         loop {
@@ -102,6 +109,8 @@ fn spawn_state_loop(store: Arc<StateStore>, hub: EventHub) -> tokio::task::JoinH
             for ev in derived {
                 hub.emit(ev);
             }
+            let snapshot = store.snapshot().await;
+            let _ = state_tx.send(snapshot);
         }
     })
 }
