@@ -131,7 +131,7 @@ impl LyricsService {
             {
                 tracing::debug!("lyrics: initial fetch for active player {}", active);
                 let track = track.clone();
-                self.fetch_for_track(&track).await;
+                self.fetch_for_track(&track, &initial).await;
             }
         }
 
@@ -159,14 +159,14 @@ impl LyricsService {
                         );
                         continue;
                     }
-                    self.fetch_for_track(&track).await;
+                    self.fetch_for_track(&track, &state).await;
                 }
                 Event::ActivePlayerChanged { player, .. } => {
                     tracing::debug!("lyrics: active player changed to {}", player);
                     let state = self.store.snapshot().await;
                     if let Some(player_state) = state.players.get(&player) {
                         if let Some(track) = &player_state.track {
-                            self.fetch_for_track(track).await;
+                            self.fetch_for_track(track, &state).await;
                         } else {
                             tracing::debug!("lyrics: active player has no track yet");
                         }
@@ -181,7 +181,7 @@ impl LyricsService {
                         if state.active_player.as_ref() == Some(&player) {
                             if let Some(player_state) = state.players.get(&player) {
                                 if let Some(track) = &player_state.track {
-                                    self.fetch_for_track(track).await;
+                                    self.fetch_for_track(track, &state).await;
                                 } else {
                                     tracing::debug!("lyrics: playing but track missing");
                                 }
@@ -203,7 +203,7 @@ impl LyricsService {
         Ok(())
     }
 
-    async fn fetch_for_track(&self, track: &TrackInfo) {
+    async fn fetch_for_track(&self, track: &TrackInfo, state: &crate::state::GlobalState) {
         if track.title.is_empty() {
             return;
         }
@@ -216,7 +216,6 @@ impl LyricsService {
             track.artist
         );
 
-        let state = self.store.snapshot().await;
         if state.lyrics.track_key.as_ref() == Some(&track_key) {
             match state.lyrics.status {
                 crate::state::LyricsStatus::Ready | crate::state::LyricsStatus::Loading => {
