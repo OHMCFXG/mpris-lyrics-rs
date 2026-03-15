@@ -30,10 +30,31 @@ pub struct Lyrics {
     pub lines: Vec<LyricLine>,
 }
 
-pub type TrackKey = String;
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TrackKey {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+}
+
+impl TrackKey {
+    pub fn new(track: &TrackInfo) -> Self {
+        Self {
+            title: track.title.clone(),
+            artist: track.artist.clone(),
+            album: track.album.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for TrackKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}::{}::{}", self.title, self.artist, self.album)
+    }
+}
 
 pub fn make_track_key(track: &TrackInfo) -> TrackKey {
-    format!("{}::{}::{}", track.title, track.artist, track.album)
+    TrackKey::new(track)
 }
 
 pub fn parse_lrc_text(lrc_text: &str, track: &TrackInfo, source: &str) -> Result<Lyrics> {
@@ -84,7 +105,11 @@ pub struct LyricsService {
 }
 
 impl LyricsService {
-    pub fn new(providers: Vec<Arc<dyn LyricsProvider>>, hub: EventHub, store: Arc<StateStore>) -> Self {
+    pub fn new(
+        providers: Vec<Arc<dyn LyricsProvider>>,
+        hub: EventHub,
+        store: Arc<StateStore>,
+    ) -> Self {
         Self {
             providers,
             hub,
@@ -222,7 +247,9 @@ impl LyricsService {
             pending.insert(track_key.clone());
         }
 
-        self.hub.emit(Event::LyricsRequested { track_key: track_key.clone() });
+        self.hub.emit(Event::LyricsRequested {
+            track_key: track_key.clone(),
+        });
 
         let mut found: Option<Lyrics> = None;
         for provider in &self.providers {
@@ -237,13 +264,19 @@ impl LyricsService {
                 Err(err) => {
                     let msg = format!("{}: {}", provider.name(), err);
                     tracing::debug!("lyrics: provider {} error {}", provider.name(), msg);
-                    self.hub.emit(Event::LyricsFailed { track_key: track_key.clone(), error: msg });
+                    self.hub.emit(Event::LyricsFailed {
+                        track_key: track_key.clone(),
+                        error: msg,
+                    });
                 }
             }
         }
 
         if let Some(lyrics) = found {
-            self.hub.emit(Event::LyricsUpdated { track_key: track_key.clone(), lyrics });
+            self.hub.emit(Event::LyricsUpdated {
+                track_key: track_key.clone(),
+                lyrics,
+            });
         } else {
             self.hub.emit(Event::LyricsFailed {
                 track_key: track_key.clone(),
