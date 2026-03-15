@@ -124,17 +124,12 @@ impl StateStore {
 
         match event {
             Event::PlayerAppeared { player } => {
-                state.players.entry(player.clone()).or_insert_with(PlayerState::new);
-                state.players.get_mut(player).map(|p| p.last_seen = Instant::now());
-                if state.active_player.is_none() && state.manual_override.is_none() {
-                    if let Some(next) = policy::select_active_player(&state.players) {
-                        state.active_player = Some(next.clone());
-                        derived.push(Event::ActivePlayerChanged {
-                            player: next,
-                            reason: ActiveReason::Initial,
-                        });
-                    }
-                }
+                let entry = state
+                    .players
+                    .entry(player.clone())
+                    .or_insert_with(PlayerState::new);
+                touch_player(entry);
+                maybe_select_active_if_none(&mut state, &mut derived);
             }
             Event::PlayerDisappeared { player } => {
                 state.players.remove(player);
@@ -144,52 +139,38 @@ impl StateStore {
                 if state.active_player.as_ref() == Some(player) {
                     state.active_player = None;
                 }
-                if state.manual_override.is_none() {
-                    if let Some(next) = policy::select_active_player(&state.players) {
-                        state.active_player = Some(next.clone());
-                        derived.push(Event::ActivePlayerChanged {
-                            player: next,
-                            reason: ActiveReason::PlayerGone,
-                        });
-                    }
-                }
+                maybe_select_active(&mut state, ActiveReason::PlayerGone, &mut derived);
             }
             Event::PlaybackStatusChanged { player, status } => {
-                let entry = state.players.entry(player.clone()).or_insert_with(PlayerState::new);
-                entry.playback_status = status.clone();
-                entry.position_ts = Instant::now();
-                entry.last_seen = Instant::now();
-                if state.manual_override.is_none() {
-                    if let Some(next) = policy::select_active_player(&state.players) {
-                        if state.active_player.as_ref() != Some(&next) {
-                            state.active_player = Some(next.clone());
-                            derived.push(Event::ActivePlayerChanged {
-                                player: next,
-                                reason: ActiveReason::Auto,
-                            });
-                        }
-                    }
-                }
+                let entry = state
+                    .players
+                    .entry(player.clone())
+                    .or_insert_with(PlayerState::new);
+                update_status(entry, status.clone());
+                maybe_select_active(&mut state, ActiveReason::Auto, &mut derived);
             }
             Event::TrackChanged { player, track } => {
-                let entry = state.players.entry(player.clone()).or_insert_with(PlayerState::new);
-                entry.track = Some(track.clone());
-                entry.position_ms = 0;
-                entry.position_ts = Instant::now();
-                entry.last_seen = Instant::now();
+                let entry = state
+                    .players
+                    .entry(player.clone())
+                    .or_insert_with(PlayerState::new);
+                update_track(entry, track.clone());
             }
-            Event::Seeked { player, position_ms } | Event::PositionUpdated { player, position_ms } => {
+            Event::Seeked {
+                player,
+                position_ms,
+            }
+            | Event::PositionUpdated {
+                player,
+                position_ms,
+            } => {
                 if let Some(entry) = state.players.get_mut(player) {
-                    entry.position_ms = *position_ms;
-                    entry.position_ts = Instant::now();
-                    entry.last_seen = Instant::now();
+                    update_position(entry, *position_ms);
                 }
             }
             Event::RateChanged { player, rate } => {
                 if let Some(entry) = state.players.get_mut(player) {
-                    entry.rate = *rate;
-                    entry.position_ts = Instant::now();
-                    entry.last_seen = Instant::now();
+                    update_rate(entry, *rate);
                 }
             }
             Event::LyricsRequested { track_key } => {
@@ -213,34 +194,96 @@ impl StateStore {
                 state.lyrics.fail_count = state.lyrics.fail_count.saturating_add(1);
                 state.lyrics.last_failed_at = Some(Instant::now());
             }
-            Event::UiCommand { command } => {
-                match command {
-                    UiCommand::SelectNextPlayer => {
-                        if let Some(next) = policy::select_next_player(&state.players, state.active_player.as_deref()) {
-                            state.manual_override = Some(next.clone());
-                            state.active_player = Some(next.clone());
-                            derived.push(Event::ActivePlayerChanged {
-                                player: next,
-                                reason: ActiveReason::Manual,
-                            });
-                        }
+            Event::UiCommand { command } => match command {
+                UiCommand::SelectNextPlayer => {
+                    if let Some(next) =
+                        policy::select_next_player(&state.players, state.active_player.as_deref())
+                    {
+                        state.manual_override = Some(next.clone());
+                        state.active_player = Some(next.clone());
+                        derived.push(Event::ActivePlayerChanged {
+                            player: next,
+                            reason: ActiveReason::Manual,
+                        });
                     }
-                    UiCommand::SelectPrevPlayer => {
-                        if let Some(prev) = policy::select_prev_player(&state.players, state.active_player.as_deref()) {
-                            state.manual_override = Some(prev.clone());
-                            state.active_player = Some(prev.clone());
-                            derived.push(Event::ActivePlayerChanged {
-                                player: prev,
-                                reason: ActiveReason::Manual,
-                            });
-                        }
-                    }
-                    UiCommand::Quit | UiCommand::ToggleHelp => {}
                 }
-            }
+                UiCommand::SelectPrevPlayer => {
+                    if let Some(prev) =
+                        policy::select_prev_player(&state.players, state.active_player.as_deref())
+                    {
+                        state.manual_override = Some(prev.clone());
+                        state.active_player = Some(prev.clone());
+                        derived.push(Event::ActivePlayerChanged {
+                            player: prev,
+                            reason: ActiveReason::Manual,
+                        });
+                    }
+                }
+                UiCommand::Quit | UiCommand::ToggleHelp => {}
+            },
             Event::ActivePlayerChanged { .. } => {}
         }
 
         derived
+    }
+}
+
+fn touch_player(player: &mut PlayerState) {
+    player.last_seen = Instant::now();
+}
+
+fn update_position(player: &mut PlayerState, position_ms: u64) {
+    let now = Instant::now();
+    player.position_ms = position_ms;
+    player.position_ts = now;
+    player.last_seen = now;
+}
+
+fn update_status(player: &mut PlayerState, status: PlaybackStatus) {
+    let now = Instant::now();
+    player.playback_status = status;
+    player.position_ts = now;
+    player.last_seen = now;
+}
+
+fn update_rate(player: &mut PlayerState, rate: f64) {
+    let now = Instant::now();
+    player.rate = rate;
+    player.position_ts = now;
+    player.last_seen = now;
+}
+
+fn update_track(player: &mut PlayerState, track: TrackInfo) {
+    let now = Instant::now();
+    player.track = Some(track);
+    player.position_ms = 0;
+    player.position_ts = now;
+    player.last_seen = now;
+}
+
+fn maybe_select_active_if_none(state: &mut GlobalState, derived: &mut Vec<Event>) {
+    if state.active_player.is_none() && state.manual_override.is_none() {
+        if let Some(next) = policy::select_active_player(&state.players) {
+            state.active_player = Some(next.clone());
+            derived.push(Event::ActivePlayerChanged {
+                player: next,
+                reason: ActiveReason::Initial,
+            });
+        }
+    }
+}
+
+fn maybe_select_active(state: &mut GlobalState, reason: ActiveReason, derived: &mut Vec<Event>) {
+    if state.manual_override.is_some() {
+        return;
+    }
+    if let Some(next) = policy::select_active_player(&state.players) {
+        if state.active_player.as_ref() != Some(&next) {
+            state.active_player = Some(next.clone());
+            derived.push(Event::ActivePlayerChanged {
+                player: next,
+                reason,
+            });
+        }
     }
 }
