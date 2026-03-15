@@ -3,35 +3,16 @@ use std::collections::HashMap;
 use crate::state::{PlaybackStatus, PlayerState};
 
 pub fn select_active_player(players: &HashMap<String, PlayerState>) -> Option<String> {
-    let mut playing: Vec<String> = Vec::new();
-    let mut paused: Vec<String> = Vec::new();
-    let mut stopped: Vec<String> = Vec::new();
-
-    for (name, state) in players {
-        match state.playback_status {
-            PlaybackStatus::Playing => playing.push(name.clone()),
-            PlaybackStatus::Paused => paused.push(name.clone()),
-            PlaybackStatus::Stopped => stopped.push(name.clone()),
-        }
-    }
-
-    playing.sort();
-    paused.sort();
-    stopped.sort();
-
-    playing
-        .into_iter()
-        .next()
-        .or_else(|| paused.into_iter().next())
-        .or_else(|| stopped.into_iter().next())
+    select_first_by_status(players, PlaybackStatus::Playing)
+        .or_else(|| select_first_by_status(players, PlaybackStatus::Paused))
+        .or_else(|| select_first_by_status(players, PlaybackStatus::Stopped))
 }
 
 pub fn select_next_player(
     players: &HashMap<String, PlayerState>,
     current: Option<&str>,
 ) -> Option<String> {
-    let mut names: Vec<String> = players.keys().cloned().collect();
-    names.sort();
+    let names = sorted_player_names(players);
     if names.is_empty() {
         return None;
     }
@@ -50,8 +31,7 @@ pub fn select_prev_player(
     players: &HashMap<String, PlayerState>,
     current: Option<&str>,
 ) -> Option<String> {
-    let mut names: Vec<String> = players.keys().cloned().collect();
-    names.sort();
+    let names = sorted_player_names(players);
     if names.is_empty() {
         return None;
     }
@@ -64,4 +44,22 @@ pub fn select_prev_player(
             Some(names[prev_idx].clone())
         }
     }
+}
+
+fn sorted_player_names(players: &HashMap<String, PlayerState>) -> Vec<String> {
+    let mut names: Vec<String> = players.keys().cloned().collect();
+    names.sort();
+    names
+}
+
+fn select_first_by_status(
+    players: &HashMap<String, PlayerState>,
+    status: PlaybackStatus,
+) -> Option<String> {
+    players
+        .iter()
+        .filter(|(_, state)| state.playback_status == status)
+        .map(|(name, _)| name)
+        .min()
+        .cloned()
 }
